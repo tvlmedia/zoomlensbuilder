@@ -1947,7 +1947,8 @@
     maxUsableVigFrac: 0.50,
     minUsableCenterThroughput: 0.18,
     minElements: 3,
-    maxElementsHardCap: 14,
+    defaultMaxElements: 12,
+    maxElementsHardCap: 18,
   };
 
   function softIcLabel(cfg = SOFT_IC_CFG) {
@@ -5424,6 +5425,21 @@
     return "normal";
   }
 
+  function normalizeScratchDesignIntent(v) {
+    const s = String(v || "auto").trim().toLowerCase();
+    if (s === "cine_zoom" || s === "cine zoom" || s === "zoom" || s === "cine") return "cine_zoom";
+    if (s === "tele_zoom" || s === "tele zoom" || s === "broadcast" || s === "sports") return "tele_zoom";
+    if (s === "prime_like" || s === "prime-like" || s === "prime") return "prime_like";
+    return "auto";
+  }
+
+  function normalizeScratchZoomPriority(v) {
+    const s = String(v || "balanced").trim().toLowerCase();
+    if (s === "wide") return "wide";
+    if (s === "tele") return "tele";
+    return "balanced";
+  }
+
   function scratchFamilyLabel(key) {
     if (key === "double_gauss") return "Double-Gauss";
     if (key === "retrofocus_wide") return "Retrofocus Wide";
@@ -5439,9 +5455,67 @@
     return "telephoto";
   }
 
-  function resolveScratchFamily(requestedFamily, targetEfl) {
+  function resolveScratchZoomTargets(wideIn, teleIn) {
+    const wRaw = Math.abs(Number(wideIn));
+    const tRaw = Math.abs(Number(teleIn));
+    if (!Number.isFinite(wRaw) || !Number.isFinite(tRaw) || wRaw <= 1 || tRaw <= 1) {
+      return { enabled: false, wide: null, tele: null, ratio: 1 };
+    }
+    const wide = clamp(Math.min(wRaw, tRaw), 12, 320);
+    const tele = clamp(Math.max(wRaw, tRaw), 12, 320);
+    return {
+      enabled: true,
+      wide,
+      tele,
+      ratio: tele / Math.max(1e-6, wide),
+    };
+  }
+
+  function targetEflFromZoomTargets(zoomTargets, priority = "balanced") {
+    if (!zoomTargets?.enabled) return Number.NaN;
+    const mode = normalizeScratchZoomPriority(priority);
+    if (mode === "wide") return Number(zoomTargets.wide);
+    if (mode === "tele") return Number(zoomTargets.tele);
+    return Math.sqrt(Number(zoomTargets.wide) * Number(zoomTargets.tele));
+  }
+
+  function inferScratchFamilyForZoomTargets(zoomTargets, designIntent = "auto") {
+    if (!zoomTargets?.enabled) return "double_gauss";
+    const intent = normalizeScratchDesignIntent(designIntent);
+    const wide = Number(zoomTargets.wide || 0);
+    const tele = Number(zoomTargets.tele || 0);
+    const ratio = Number(zoomTargets.ratio || 1);
+    if (intent === "tele_zoom") return "telephoto";
+    if (intent === "prime_like") return autoScratchFamilyForTargetEfl(targetEflFromZoomTargets(zoomTargets, "balanced"));
+    if (intent === "cine_zoom") {
+      if (wide <= 35) return "retrofocus_wide";
+      if (tele >= 120) return "telephoto";
+      return "double_gauss";
+    }
+    if (wide <= 32 && ratio >= 1.5) return "retrofocus_wide";
+    if (tele >= 120 && wide >= 35) return "telephoto";
+    return autoScratchFamilyForTargetEfl(targetEflFromZoomTargets(zoomTargets, "balanced"));
+  }
+
+  function suggestedScratchElementsForZoom(zoomTargets, designIntent = "auto") {
+    if (!zoomTargets?.enabled) return Number(SCRATCH_CFG.defaultMaxElements || 12);
+    const intent = normalizeScratchDesignIntent(designIntent);
+    const ratio = Number(zoomTargets.ratio || 1);
+    let base = 10;
+    if (intent === "cine_zoom") base = 12;
+    else if (intent === "tele_zoom") base = 11;
+    else if (intent === "prime_like") base = 8;
+    const ratioBoost = Math.max(0, Math.ceil((ratio - 1.6) * 2));
+    const minE = Number(SCRATCH_CFG.minElements || 3);
+    const maxE = Number(SCRATCH_CFG.maxElementsHardCap || 18);
+    return Math.max(minE, Math.min(maxE, Math.round(base + ratioBoost)));
+  }
+
+  function resolveScratchFamily(requestedFamily, targetEfl, zoomTargets = null, designIntent = "auto") {
     const req = normalizeScratchFamily(requestedFamily);
-    return req === "auto" ? autoScratchFamilyForTargetEfl(targetEfl) : req;
+    if (req !== "auto") return req;
+    if (zoomTargets?.enabled) return inferScratchFamilyForZoomTargets(zoomTargets, designIntent);
+    return autoScratchFamilyForTargetEfl(targetEfl);
   }
 
   function countLensElements(surfaces) {
@@ -5459,9 +5533,9 @@
 
   function clampScratchMaxElements(v) {
     const raw = Number(v);
-    if (!Number.isFinite(raw)) return 8;
+    if (!Number.isFinite(raw)) return Number(SCRATCH_CFG.defaultMaxElements || 12);
     const minE = Number(SCRATCH_CFG.minElements || 3);
-    const maxE = Number(SCRATCH_CFG.maxElementsHardCap || 14);
+    const maxE = Number(SCRATCH_CFG.maxElementsHardCap || 18);
     return Math.max(minE, Math.min(maxE, Math.round(raw)));
   }
 
@@ -6302,12 +6376,16 @@
 
   async function buildFromScratchPipeline({
     targetEfl,
+    targetEflWide = null,
+    targetEflTele = null,
     targetT,
     targetIC = 0,
     family = "auto",
-    maxElements = 8,
+    maxElements = Number(SCRATCH_CFG.defaultMaxElements || 12),
     aggressiveness = "normal",
     effort = 1.0,
+    zoomPriority = "balanced",
+    designIntent = "auto",
     stopWhenAcceptable = true,
   } = {}) {
     if (scratchBuildRunning) return;
@@ -6331,21 +6409,51 @@
       const sensor = getSensorWH();
       const wavePreset = ui.wavePreset?.value || "d";
       const tRaw = Number(targetT ?? num(ui.optTargetT?.value, 2.0));
+      const zoomTargets = resolveScratchZoomTargets(
+        targetEflWide ?? ui.zoomWideFL?.value,
+        targetEflTele ?? ui.zoomTeleFL?.value
+      );
+      const zoomMode = normalizeScratchZoomPriority(zoomPriority);
+      const intent = normalizeScratchDesignIntent(designIntent);
+      const fallbackTargetEfl = clamp(Math.abs(Number(targetEfl || num(ui.optTargetFL?.value, 50))), 12, 320);
+      const solveTargetEfl = zoomTargets.enabled
+        ? targetEflFromZoomTargets(zoomTargets, zoomMode)
+        : fallbackTargetEfl;
       const targets = {
-        targetEfl: clamp(Math.abs(Number(targetEfl || num(ui.optTargetFL?.value, 50))), 12, 320),
+        targetEfl: clamp(Math.abs(Number(solveTargetEfl || fallbackTargetEfl)), 12, 320),
         targetT: (Number.isFinite(tRaw) && tRaw > 0.25) ? tRaw : 2.0,
         targetIC: Math.max(0, Number(targetIC ?? num(ui.optTargetIC?.value, 0))),
+        zoom: zoomTargets.enabled
+          ? {
+              ...zoomTargets,
+              mode: zoomMode,
+              designIntent: intent,
+            }
+          : null,
       };
       const aggr = normalizeScratchAggressiveness(aggressiveness);
       const effortScale = clampScratchEffort(effort);
       const stopOnAccept = stopWhenAcceptable !== false;
-      const familyResolved = resolveScratchFamily(family, targets.targetEfl);
-      const maxElems = clampScratchMaxElements(maxElements);
+      const familyResolved = resolveScratchFamily(family, targets.targetEfl, targets.zoom, intent);
+      const maxElemsInput = clampScratchMaxElements(maxElements);
+      const zoomSuggestedElems = targets.zoom?.enabled
+        ? suggestedScratchElementsForZoom(targets.zoom, intent)
+        : maxElemsInput;
+      const maxElems = targets.zoom?.enabled ? Math.max(maxElemsInput, zoomSuggestedElems) : maxElemsInput;
 
       if (ui.optTargetFL) ui.optTargetFL.value = targets.targetEfl.toFixed(2);
       if (ui.optTargetT) ui.optTargetT.value = targets.targetT.toFixed(2);
       if (ui.optTargetIC) ui.optTargetIC.value = targets.targetIC.toFixed(2);
       if (ui.fieldAngle) ui.fieldAngle.value = "0";
+      if (targets.zoom?.enabled) {
+        if (ui.zoomWideFL) ui.zoomWideFL.value = Number(targets.zoom.wide).toFixed(2);
+        if (ui.zoomTeleFL) ui.zoomTeleFL.value = Number(targets.zoom.tele).toFixed(2);
+        if (ui.zoomPos) {
+          const pos = targets.zoom.mode === "wide" ? 0 : (targets.zoom.mode === "tele" ? 100 : 50);
+          ui.zoomPos.value = String(pos);
+        }
+        updateZoomReadouts();
+      }
 
       const baseLens = generateBaseLens(
         familyResolved,
@@ -6372,11 +6480,15 @@
       let runStep = 0;
 
       const startElements = countLensElements(lens.surfaces);
+      const zoomInfoTxt = targets.zoom?.enabled
+        ? `zoom ${targets.zoom.wide.toFixed(2)}-${targets.zoom.tele.toFixed(2)}mm (${targets.zoom.ratio.toFixed(2)}x) • solve ${targets.zoom.mode} • intent ${targets.zoom.designIntent}\n`
+        : "";
       setOptLog(
         `Build From Scratch\n` +
         `family ${scratchFamilyLabel(familyResolved)} • aggr ${aggr} • effort x${effortScale.toFixed(2)} • stopOnAccept ${stopOnAccept ? "ON" : "OFF"}\n` +
+        zoomInfoTxt +
         `targets FL ${targets.targetEfl.toFixed(2)} • T ${targets.targetT.toFixed(2)} • IC ${targets.targetIC.toFixed(2)}\n` +
-        `elements ${startElements}/${maxElems}\n` +
+        `elements ${startElements}/${maxElems}${targets.zoom?.enabled ? ` (zoom min ${zoomSuggestedElems})` : ""}\n` +
         `planned optimizer runs <= ${runTotalEstimate}`
       );
 
@@ -6692,6 +6804,9 @@
       const done = !abortedByUser && usable && (doneStrict || (stopOnAccept && acceptable));
       const finalElems = countLensElements(lens.surfaces);
       const usableReasons = scratchUsabilityReasons(finalSnap, targets);
+      const zoomResultTxt = targets.zoom?.enabled
+        ? `zoom ${targets.zoom.wide.toFixed(2)}-${targets.zoom.tele.toFixed(2)}mm (${targets.zoom.ratio.toFixed(2)}x) • solve ${targets.zoom.mode} • intent ${targets.zoom.designIntent}\n`
+        : "";
       const headline = abortedByUser
         ? "STOPPED ⏹"
         : (!p.feasible
@@ -6700,6 +6815,7 @@
       setOptLog(
         `Build From Scratch ${headline}\n` +
         `family ${scratchFamilyLabel(familyResolved)} • aggr ${aggr} • effort x${effortScale.toFixed(2)}\n` +
+        zoomResultTxt +
         `${earlyStopReason ? `stop ${earlyStopReason}\n` : ""}` +
         `${bestFeasibleSnapshot ? `fallback ${bestFeasibleSnapshot.label}\n` : ""}` +
         `${bestUsableSnapshot ? `usable fallback ${bestUsableSnapshot.label}\n` : ""}` +
@@ -6716,8 +6832,9 @@
       );
 
       toast(
-        `Build from scratch ${abortedByUser ? "stopped" : (!p.feasible ? "failed" : (usable ? (done ? "done" : "ready (usable best effort)") : "ready (best feasible)"))} • ${scratchFamilyLabel(familyResolved)} • FL ${Number.isFinite(p.efl) ? p.efl.toFixed(1) : "—"}mm`
+        `Build from scratch ${abortedByUser ? "stopped" : (!p.feasible ? "failed" : (usable ? (done ? "done" : "ready (usable best effort)") : "ready (best feasible)"))} • ${scratchFamilyLabel(familyResolved)} • FL ${Number.isFinite(p.efl) ? p.efl.toFixed(1) : "—"}mm${targets.zoom?.enabled ? ` • zoom ${targets.zoom.wide.toFixed(0)}-${targets.zoom.tele.toFixed(0)}` : ""}`
       );
+      if (targets.zoom?.enabled) updateZoomReadouts();
       scheduleAutosave();
     } catch (err) {
       console.error(err);
@@ -6744,21 +6861,55 @@
     }
 
     const curSensor = getSensorWH();
-    const curFamily = resolveScratchFamily("auto", num(ui.optTargetFL?.value, 50));
+    const curWide = num(ui.zoomWideFL?.value, 24);
+    const curTele = num(ui.zoomTeleFL?.value, 70);
+    const curZoom = resolveScratchZoomTargets(curWide, curTele);
+    const curSolveMode = "balanced";
+    const curSolveFl = curZoom.enabled
+      ? targetEflFromZoomTargets(curZoom, curSolveMode)
+      : num(ui.optTargetFL?.value, 50);
+    const curFamily = resolveScratchFamily("auto", curSolveFl, curZoom, "auto");
+    const curMaxElems = Math.max(
+      Number(SCRATCH_CFG.defaultMaxElements || 12),
+      curZoom.enabled ? suggestedScratchElementsForZoom(curZoom, "auto") : Number(SCRATCH_CFG.defaultMaxElements || 12)
+    );
+    const maxElemCap = Number(SCRATCH_CFG.maxElementsHardCap || 18);
+
     ui.newLensModal.innerHTML = `
       <div class="modalCard" role="dialog" aria-modal="true" aria-label="Build From Scratch">
         <div class="modalTop">
           <div>
-            <div class="modalTitle">Build From Scratch</div>
-            <div class="modalSub">Generate topology + staged optimize + auto-grow blocks until targets or max elements.</div>
+            <div class="modalTitle">Build Zoom From Scratch</div>
+            <div class="modalSub">Use wide+tele targets, infer lens type, then staged optimize + auto-grow elements.</div>
           </div>
           <button class="modalX" id="bfClose" type="button">✕</button>
         </div>
         <div class="modalScroll">
           <div class="modalGrid">
             <div class="field">
-              <label>Target FL (mm)</label>
-              <input id="bfTargetFL" type="number" step="0.1" value="${num(ui.optTargetFL?.value, 50).toFixed(2)}" />
+              <label>Target FL Wide (mm)</label>
+              <input id="bfTargetWide" type="number" step="0.1" value="${(curZoom.enabled ? curZoom.wide : curWide).toFixed(2)}" />
+            </div>
+            <div class="field">
+              <label>Target FL Tele (mm)</label>
+              <input id="bfTargetTele" type="number" step="0.1" value="${(curZoom.enabled ? curZoom.tele : Math.max(curWide, curTele)).toFixed(2)}" />
+            </div>
+            <div class="field">
+              <label>Solve FL priority</label>
+              <select id="bfZoomPriority">
+                <option value="balanced" selected>Balanced (recommended)</option>
+                <option value="wide">Wide priority</option>
+                <option value="tele">Tele priority</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Design intent</label>
+              <select id="bfDesignIntent">
+                <option value="auto" selected>Auto infer</option>
+                <option value="cine_zoom">Cine zoom</option>
+                <option value="tele_zoom">Tele/broadcast zoom</option>
+                <option value="prime_like">Prime-like look</option>
+              </select>
             </div>
             <div class="field">
               <label>Target T</label>
@@ -6779,7 +6930,7 @@
             </div>
             <div class="field">
               <label>Max elements</label>
-              <input id="bfMaxElements" type="number" step="1" min="3" max="14" value="8" />
+              <input id="bfMaxElements" type="number" step="1" min="3" max="${maxElemCap}" value="${Math.round(curMaxElems)}" />
             </div>
             <div class="field">
               <label>Aggressiveness</label>
@@ -6803,9 +6954,10 @@
             <div class="fieldFull">
               <div class="hint">
                 Sensor currently: ${curSensor.w.toFixed(2)}×${curSensor.h.toFixed(2)}mm.
-                Build uses existing mount/physics constraints (PL intrusion/throat, stop in AIR, min CT/gaps).
-                Effort > 1.0 gives longer runs and more grow cycles.
+                Builder uses existing mount/physics constraints (PL intrusion/throat, stop in AIR, min CT/gaps).
+                More zoom range usually needs more elements; higher effort gives longer runs and more grow cycles.
               </div>
+              <div id="bfAutoHint" class="hint" style="margin-top:8px">Auto design: ${scratchFamilyLabel(curFamily)} • solve FL ${Number(curSolveFl).toFixed(2)}mm • suggested elements ${Math.round(curMaxElems)}+</div>
             </div>
           </div>
         </div>
@@ -6831,15 +6983,58 @@
       if (e.target === ui.newLensModal) close();
     });
 
+    const q = (sel) => ui.newLensModal?.querySelector(sel);
+    const refreshBuildHint = () => {
+      const wideNow = num(q("#bfTargetWide")?.value, num(ui.zoomWideFL?.value, 24));
+      const teleNow = num(q("#bfTargetTele")?.value, num(ui.zoomTeleFL?.value, 70));
+      const zNow = resolveScratchZoomTargets(wideNow, teleNow);
+      const modeNow = normalizeScratchZoomPriority(q("#bfZoomPriority")?.value || "balanced");
+      const intentNow = normalizeScratchDesignIntent(q("#bfDesignIntent")?.value || "auto");
+      const solveNow = zNow.enabled
+        ? targetEflFromZoomTargets(zNow, modeNow)
+        : num(ui.optTargetFL?.value, 50);
+      const inferredFamily = resolveScratchFamily("auto", solveNow, zNow, intentNow);
+      const recElems = zNow.enabled
+        ? suggestedScratchElementsForZoom(zNow, intentNow)
+        : Number(SCRATCH_CFG.defaultMaxElements || 12);
+      const famAutoOpt = q('#bfFamily option[value="auto"]');
+      if (famAutoOpt) famAutoOpt.textContent = `Auto (${scratchFamilyLabel(inferredFamily)} now)`;
+      const hint = q("#bfAutoHint");
+      if (!hint) return;
+      if (zNow.enabled) {
+        hint.textContent =
+          `Auto design: ${scratchFamilyLabel(inferredFamily)} • solve FL ${Number(solveNow).toFixed(2)}mm from ${zNow.wide.toFixed(2)}-${zNow.tele.toFixed(2)}mm (${zNow.ratio.toFixed(2)}x) • suggested elements ${Math.round(recElems)}+`;
+      } else {
+        hint.textContent =
+          `Auto design: ${scratchFamilyLabel(inferredFamily)} • solve FL ${Number(solveNow).toFixed(2)}mm • suggested elements ${Math.round(recElems)}+`;
+      }
+    };
+    ["#bfTargetWide", "#bfTargetTele", "#bfZoomPriority", "#bfDesignIntent"].forEach((sel) => {
+      q(sel)?.addEventListener("input", refreshBuildHint);
+      q(sel)?.addEventListener("change", refreshBuildHint);
+    });
+    refreshBuildHint();
+
     ui.newLensModal.querySelector("#bfRun")?.addEventListener("click", () => {
+      const wideIn = num($("#bfTargetWide")?.value, num(ui.zoomWideFL?.value, 24));
+      const teleIn = num($("#bfTargetTele")?.value, num(ui.zoomTeleFL?.value, 70));
+      const z = resolveScratchZoomTargets(wideIn, teleIn);
+      const zoomMode = normalizeScratchZoomPriority($("#bfZoomPriority")?.value || "balanced");
+      const solveFl = z.enabled
+        ? targetEflFromZoomTargets(z, zoomMode)
+        : num(ui.optTargetFL?.value, 50);
       const payload = {
-        targetEfl: num($("#bfTargetFL")?.value, num(ui.optTargetFL?.value, 50)),
+        targetEfl: solveFl,
+        targetEflWide: z.enabled ? z.wide : null,
+        targetEflTele: z.enabled ? z.tele : null,
         targetT: Math.max(0, num($("#bfTargetT")?.value, num(ui.optTargetT?.value, 2.0))),
         targetIC: Math.max(0, num($("#bfTargetIC")?.value, num(ui.optTargetIC?.value, 0))),
         family: normalizeScratchFamily($("#bfFamily")?.value || "auto"),
         maxElements: clampScratchMaxElements($("#bfMaxElements")?.value),
         aggressiveness: normalizeScratchAggressiveness($("#bfAggro")?.value || "normal"),
         effort: clampScratchEffort($("#bfEffort")?.value),
+        zoomPriority: zoomMode,
+        designIntent: normalizeScratchDesignIntent($("#bfDesignIntent")?.value || "auto"),
         stopWhenAcceptable: String($("#bfStopAccept")?.value || "1") !== "0",
       };
       close();
