@@ -5908,9 +5908,9 @@
   }
 
   function scratchFamilyLabel(key) {
-    if (key === "double_gauss") return "Double-Gauss";
-    if (key === "retrofocus_wide") return "Retrofocus Wide";
-    if (key === "telephoto") return "Telephoto";
+    if (key === "double_gauss") return "Standard Zoom (Double-Gauss)";
+    if (key === "retrofocus_wide") return "Wide Zoom (Retrofocus)";
+    if (key === "telephoto") return "Tele Zoom (Telephoto)";
     return "Auto";
   }
 
@@ -5946,22 +5946,46 @@
     return Math.sqrt(Number(zoomTargets.wide) * Number(zoomTargets.tele));
   }
 
-  function inferScratchFamilyForZoomTargets(zoomTargets, designIntent = "auto") {
+  function inferScratchFamilyForZoomTargets(zoomTargets, designIntent = "auto", zoomPriority = "balanced") {
     if (!zoomTargets?.enabled) return "double_gauss";
     const intent = normalizeScratchDesignIntent(designIntent);
+    const priority = normalizeScratchZoomPriority(zoomPriority || zoomTargets?.mode || "balanced");
     const wide = Number(zoomTargets.wide || 0);
     const tele = Number(zoomTargets.tele || 0);
     const ratio = Number(zoomTargets.ratio || 1);
-    if (intent === "tele_zoom") return "telephoto";
-    if (intent === "prime_like") return autoScratchFamilyForTargetEfl(targetEflFromZoomTargets(zoomTargets, "balanced"));
-    if (intent === "cine_zoom") {
-      if (wide <= 35) return "retrofocus_wide";
-      if (tele >= 120) return "telephoto";
+    const solveFl = targetEflFromZoomTargets(zoomTargets, priority);
+
+    const veryWide = wide <= 24;
+    const wideZoomBand = wide <= 30;
+    const longTele = tele >= 135;
+    const veryLongTele = tele >= 180;
+    const longRatio = ratio >= 3.2;
+
+    if (intent === "prime_like") {
+      return autoScratchFamilyForTargetEfl(targetEflFromZoomTargets(zoomTargets, "balanced"));
+    }
+
+    if (intent === "tele_zoom") {
+      if (veryWide) return "retrofocus_wide";
+      if (longTele || longRatio) return "telephoto";
       return "double_gauss";
     }
-    if (wide <= 32 && ratio >= 1.5) return "retrofocus_wide";
-    if (tele >= 120 && wide >= 35) return "telephoto";
-    return autoScratchFamilyForTargetEfl(targetEflFromZoomTargets(zoomTargets, "balanced"));
+
+    if (intent === "cine_zoom") {
+      if (veryWide) return "retrofocus_wide";
+      if (veryLongTele && wide >= 40) return "telephoto";
+      if (wideZoomBand && ratio >= 3.0 && priority !== "tele") return "retrofocus_wide";
+      return "double_gauss";
+    }
+
+    // Auto intent:
+    if (veryWide) return "retrofocus_wide";
+    if (wide <= 28 && ratio >= 3.0 && priority !== "tele") return "retrofocus_wide";
+    if (veryLongTele) return "telephoto";
+    if ((longTele && ratio >= 2.6 && wide >= 35) || (priority === "tele" && tele >= 120 && wide >= 32)) return "telephoto";
+    if (ratio <= 2.4 && wide >= 28 && tele <= 110) return "double_gauss";
+
+    return autoScratchFamilyForTargetEfl(solveFl);
   }
 
   function suggestedScratchElementsForZoom(zoomTargets, designIntent = "auto") {
@@ -5978,10 +6002,10 @@
     return Math.max(minE, Math.min(maxE, Math.round(base + ratioBoost)));
   }
 
-  function resolveScratchFamily(requestedFamily, targetEfl, zoomTargets = null, designIntent = "auto") {
+  function resolveScratchFamily(requestedFamily, targetEfl, zoomTargets = null, designIntent = "auto", zoomPriority = "balanced") {
     const req = normalizeScratchFamily(requestedFamily);
     if (req !== "auto") return req;
-    if (zoomTargets?.enabled) return inferScratchFamilyForZoomTargets(zoomTargets, designIntent);
+    if (zoomTargets?.enabled) return inferScratchFamilyForZoomTargets(zoomTargets, designIntent, zoomPriority);
     return autoScratchFamilyForTargetEfl(targetEfl);
   }
 
@@ -6901,7 +6925,7 @@
       const aggr = normalizeScratchAggressiveness(aggressiveness);
       const effortScale = clampScratchEffort(effort);
       const stopOnAccept = stopWhenAcceptable !== false;
-      const familyResolved = resolveScratchFamily(family, targets.targetEfl, targets.zoom, intent);
+      const familyResolved = resolveScratchFamily(family, targets.targetEfl, targets.zoom, intent, zoomMode);
       const maxElemsInput = clampScratchMaxElements(maxElements);
       const zoomSuggestedElems = targets.zoom?.enabled
         ? suggestedScratchElementsForZoom(targets.zoom, intent)
@@ -7335,7 +7359,7 @@
     const curSolveFl = curZoom.enabled
       ? targetEflFromZoomTargets(curZoom, curSolveMode)
       : num(ui.optTargetFL?.value, 50);
-    const curFamily = resolveScratchFamily("auto", curSolveFl, curZoom, "auto");
+    const curFamily = resolveScratchFamily("auto", curSolveFl, curZoom, "auto", curSolveMode);
     const curMaxElems = Math.max(
       Number(SCRATCH_CFG.defaultMaxElements || 12),
       curZoom.enabled ? suggestedScratchElementsForZoom(curZoom, "auto") : Number(SCRATCH_CFG.defaultMaxElements || 12)
@@ -7390,9 +7414,9 @@
               <label>Family</label>
               <select id="bfFamily">
                 <option value="auto" selected>Auto (${scratchFamilyLabel(curFamily)} now)</option>
-                <option value="double_gauss">Double-Gauss</option>
-                <option value="retrofocus_wide">Retrofocus Wide</option>
-                <option value="telephoto">Telephoto</option>
+                <option value="double_gauss">Standard Zoom (Double-Gauss)</option>
+                <option value="retrofocus_wide">Wide Zoom (Retrofocus)</option>
+                <option value="telephoto">Tele Zoom (Telephoto)</option>
               </select>
             </div>
             <div class="field">
@@ -7460,7 +7484,7 @@
       const solveNow = zNow.enabled
         ? targetEflFromZoomTargets(zNow, modeNow)
         : num(ui.optTargetFL?.value, 50);
-      const inferredFamily = resolveScratchFamily("auto", solveNow, zNow, intentNow);
+      const inferredFamily = resolveScratchFamily("auto", solveNow, zNow, intentNow, modeNow);
       const recElems = zNow.enabled
         ? suggestedScratchElementsForZoom(zNow, intentNow)
         : Number(SCRATCH_CFG.defaultMaxElements || 12);
