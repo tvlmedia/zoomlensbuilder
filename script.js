@@ -5000,6 +5000,70 @@
     if (ui.odTop) ui.odTop.textContent = odBadgeTopText;
     if (ui.realismTop) ui.realismTop.textContent = realismBadgeTopText;
 
+    const cockpitFieldDeg = Number.isFinite(sharpBadgeEval?.maxFieldDeg)
+      ? Number(sharpBadgeEval.maxFieldDeg)
+      : Number.NaN;
+    const reqFieldDeg = (Number.isFinite(efl) && efl > 1e-9)
+      ? (Math.atan((0.5 * Math.hypot(sensorW, sensorH)) / efl) * 180 / Math.PI)
+      : Number.NaN;
+    const cockpitHardReasons = [];
+    const cockpitMechanicalWarnings = [];
+    const cockpitHeuristicWarnings = [];
+    const stopInMount = isStopInsidePlMount(lens.surfaces, Number(COCKPIT_CFG.stopInMountMarginMm || 0));
+    const bflShortMm = effectiveBflShortMm(bfl, intrusion);
+    if (phys.hardFail) cockpitHardReasons.push("physics");
+    if (rayCross.invalid) cockpitHardReasons.push("xover");
+    if (!!COCKPIT_CFG.stopMustStayOutOfPlMount && stopInMount) cockpitHardReasons.push("stop_pl");
+    if (!(intrusion <= Number(COCKPIT_CFG.plIntrusionRejectMm || 0.5))) cockpitMechanicalWarnings.push("pl");
+    if (!(bflShortMm <= Number(COCKPIT_CFG.maxBflShortRejectMm || 1.0))) cockpitHeuristicWarnings.push("bfl");
+    if (!Number.isFinite(T) || T <= 0) cockpitHardReasons.push("t");
+    if (!Number.isFinite(efl) || efl <= 0) cockpitHardReasons.push("efl");
+    const cockpitReasons = [...cockpitHardReasons, ...cockpitMechanicalWarnings, ...cockpitHeuristicWarnings];
+    const cockpitLive = {
+      feasible: {
+        ok: cockpitHardReasons.length === 0,
+        reasons: cockpitReasons,
+        hardReasons: cockpitHardReasons,
+        mechanicalWarnings: cockpitMechanicalWarnings,
+        heuristicWarnings: cockpitHeuristicWarnings,
+        plIntrusionMm: intrusion,
+        overlapOk: !phys.hardFail && Number(phys.worstOverlap || 0) <= 1e-4,
+        thicknessOk: !phys.hardFail && Number(phys.worstPinch || 0) <= 1e-4,
+        stopOk: findStopSurfaceIndex(lens.surfaces) >= 0,
+        stopInMount,
+        validCenterFrac: clamp(1 - (vigPct / 100), 0, 1),
+        bflShortMm,
+      },
+      efl,
+      bfl,
+      T,
+      maxFieldDeg: cockpitFieldDeg,
+      fovDeg: fov,
+      coversGeom: Number.isFinite(cockpitFieldDeg) && Number.isFinite(reqFieldDeg) ? cockpitFieldDeg >= reqFieldDeg - 1e-3 : false,
+      usableIC: {
+        valid: softIcValid,
+        diameterMm: softIcValid ? icDiameterMm : 0,
+        radiusMm: softIcValid ? (icDiameterMm * 0.5) : 0,
+        thresholdRel: Number(softIc?.thresholdRel || SOFT_IC_CFG.thresholdRel || 0.35),
+      },
+      distortion: {
+        dist70Pct: Number(lutDistMetrics?.distPctAt70),
+        rmsPct: Number(lutDistMetrics?.rmsDistPct),
+        samples: Array.isArray(lutDistMetrics?.samples) ? lutDistMetrics.samples : [],
+      },
+      sharpness: {
+        rmsCenter: Number(sharpBadgeEval?.centerRmsMm),
+        rmsEdge: Number(sharpBadgeEval?.edgeRmsMm),
+        rmsByAngle: Array.isArray(sharpBadgeEval?.rmsByAngle) ? sharpBadgeEval.rmsByAngle : [],
+      },
+      context: {
+        sensorW,
+        sensorH,
+        wavePreset,
+        reqFieldDeg,
+      },
+    };
+
     const pHard = Array.isArray(cockpitLive?.feasible?.hardReasons) ? cockpitLive.feasible.hardReasons : [];
     const pMech = Array.isArray(cockpitLive?.feasible?.mechanicalWarnings) ? cockpitLive.feasible.mechanicalWarnings : [];
     const pHeur = Array.isArray(cockpitLive?.feasible?.heuristicWarnings) ? cockpitLive.feasible.heuristicWarnings : [];
@@ -5087,69 +5151,6 @@
         ` • MaxOD ${Number.isFinite(realismPenaltyRes?.envelope?.maxOD) ? realismPenaltyRes.envelope.maxOD.toFixed(1) : "—"}mm`;
     }
 
-    const cockpitFieldDeg = Number.isFinite(sharpBadgeEval?.maxFieldDeg)
-      ? Number(sharpBadgeEval.maxFieldDeg)
-      : Number.NaN;
-    const reqFieldDeg = (Number.isFinite(efl) && efl > 1e-9)
-      ? (Math.atan((0.5 * Math.hypot(sensorW, sensorH)) / efl) * 180 / Math.PI)
-      : Number.NaN;
-    const cockpitHardReasons = [];
-    const cockpitMechanicalWarnings = [];
-    const cockpitHeuristicWarnings = [];
-    const stopInMount = isStopInsidePlMount(lens.surfaces, Number(COCKPIT_CFG.stopInMountMarginMm || 0));
-    const bflShortMm = effectiveBflShortMm(bfl, intrusion);
-    if (phys.hardFail) cockpitHardReasons.push("physics");
-    if (rayCross.invalid) cockpitHardReasons.push("xover");
-    if (!!COCKPIT_CFG.stopMustStayOutOfPlMount && stopInMount) cockpitHardReasons.push("stop_pl");
-    if (!(intrusion <= Number(COCKPIT_CFG.plIntrusionRejectMm || 0.5))) cockpitMechanicalWarnings.push("pl");
-    if (!(bflShortMm <= Number(COCKPIT_CFG.maxBflShortRejectMm || 1.0))) cockpitHeuristicWarnings.push("bfl");
-    if (!Number.isFinite(T) || T <= 0) cockpitHardReasons.push("t");
-    if (!Number.isFinite(efl) || efl <= 0) cockpitHardReasons.push("efl");
-    const cockpitReasons = [...cockpitHardReasons, ...cockpitMechanicalWarnings, ...cockpitHeuristicWarnings];
-    const cockpitLive = {
-      feasible: {
-        ok: cockpitHardReasons.length === 0,
-        reasons: cockpitReasons,
-        hardReasons: cockpitHardReasons,
-        mechanicalWarnings: cockpitMechanicalWarnings,
-        heuristicWarnings: cockpitHeuristicWarnings,
-        plIntrusionMm: intrusion,
-        overlapOk: !phys.hardFail && Number(phys.worstOverlap || 0) <= 1e-4,
-        thicknessOk: !phys.hardFail && Number(phys.worstPinch || 0) <= 1e-4,
-        stopOk: findStopSurfaceIndex(lens.surfaces) >= 0,
-        stopInMount,
-        validCenterFrac: clamp(1 - (vigPct / 100), 0, 1),
-        bflShortMm,
-      },
-      efl,
-      bfl,
-      T,
-      maxFieldDeg: cockpitFieldDeg,
-      fovDeg: fov,
-      coversGeom: Number.isFinite(cockpitFieldDeg) && Number.isFinite(reqFieldDeg) ? cockpitFieldDeg >= reqFieldDeg - 1e-3 : false,
-      usableIC: {
-        valid: softIcValid,
-        diameterMm: softIcValid ? icDiameterMm : 0,
-        radiusMm: softIcValid ? (icDiameterMm * 0.5) : 0,
-        thresholdRel: Number(softIc?.thresholdRel || SOFT_IC_CFG.thresholdRel || 0.35),
-      },
-      distortion: {
-        dist70Pct: Number(lutDistMetrics?.distPctAt70),
-        rmsPct: Number(lutDistMetrics?.rmsDistPct),
-        samples: Array.isArray(lutDistMetrics?.samples) ? lutDistMetrics.samples : [],
-      },
-      sharpness: {
-        rmsCenter: Number(sharpBadgeEval?.centerRmsMm),
-        rmsEdge: Number(sharpBadgeEval?.edgeRmsMm),
-        rmsByAngle: Array.isArray(sharpBadgeEval?.rmsByAngle) ? sharpBadgeEval.rmsByAngle : [],
-      },
-      context: {
-        sensorW,
-        sensorH,
-        wavePreset,
-        reqFieldDeg,
-      },
-    };
     updateCockpitMetricsTable(cockpitLive);
     refreshApplyBestUi({
       targetEfl: targetEflUi,
