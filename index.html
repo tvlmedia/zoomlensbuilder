@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0b0f16" />
+  <title>Zoom Lens Builder — Meridional Raytracer (2D)</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body>
+  <a class="skipLink" href="#appMain">Skip to main</a>
+
+  <header class="topbar" role="banner">
+    <div class="brand" aria-label="Zoom Lens Builder">
+      <div class="dot" aria-hidden="true"></div>
+      <div class="brandText">
+        <div class="title">Zoom Lens Builder (2D)</div>
+        <div class="subtitle">OSLO-ish doorsnede • stop-aware • zoom-range builder • sanity check tool</div>
+      </div>
+    </div>
+
+    <div class="toolbar" role="toolbar" aria-label="Main toolbar">
+      <button id="btnNew" class="btn" type="button">New / Clear</button>
+      <button id="btnLoadOmit" class="btn" type="button">Load 50mm prime preset</button>
+      <button id="btnLoadDemo" class="btn" type="button">Load zoom starter</button>
+
+      <div class="sep" aria-hidden="true"></div>
+
+      <button id="btnAdd" class="btn" type="button">+ Surface</button>
+      <button id="btnAddElement" class="btn" type="button">+ Element</button>
+      <button id="btnDuplicate" class="btn" type="button">Duplicate</button>
+      <button id="btnMoveUp" class="btn" type="button">↑</button>
+      <button id="btnMoveDown" class="btn" type="button">↓</button>
+      <button id="btnRemove" class="btn btnDanger" type="button">Delete</button>
+
+      <div class="sep" aria-hidden="true"></div>
+
+      <button id="btnScaleToFocal" class="btn" type="button">Scale → Target FL</button>
+      <button id="btnSetTStop" class="btn" type="button">Set T</button>
+      <button id="btnAutoFocus" class="btn" type="button">Auto focus</button>
+
+      <div class="sep" aria-hidden="true"></div>
+
+      <button id="btnBuildScratch" class="btn btnPrimary" type="button">Build Zoom From Scratch</button>
+      <button id="btnOptStart" class="btn btnPrimary" type="button">Optimize</button>
+      <button id="btnOptStop" class="btn" type="button">Stop</button>
+      <button id="btnOptApply" class="btn" type="button">Apply best</button>
+      <button id="btnOptBench" class="btn" type="button" title="Ruwe snelheidstest (200 evals)">Bench</button>
+
+      <div class="sep" aria-hidden="true"></div>
+
+      <button id="btnSave" class="btn" type="button">Save JSON</button>
+      <label class="fileBtn btn" role="button" tabindex="0">
+        Load JSON
+        <input id="fileLoad" type="file" accept="application/json" />
+      </label>
+    </div>
+  </header>
+
+  <main id="appMain" class="layout" role="main">
+    <!-- LEFT -->
+    <aside class="panel left" aria-label="Controls and surface table">
+      <section class="panelHeader">
+        <div class="h1">Surface Data</div>
+        <div class="hint">
+          Klik een rij om te selecteren. R=0 is plane. Glass = medium ná surface. Stop = 1 surface. IMS ap = sensor half-height.
+        </div>
+      </section>
+
+      <div class="leftScroll">
+        <section class="controls" aria-label="Lens and render controls">
+          <div class="controlGrid">
+            <div class="ctrl">
+              <label for="sensorPreset">Sensor preset</label>
+              <select id="sensorPreset"></select>
+            </div>
+
+            <div class="ctrl two">
+              <label for="sensorW">Sensor W (mm)</label>
+              <input id="sensorW" type="number" step="0.01" />
+            </div>
+
+            <div class="ctrl two">
+              <label for="sensorH">Sensor H (mm)</label>
+              <input id="sensorH" type="number" step="0.01" />
+            </div>
+
+            <div class="ctrl">
+              <label for="fieldAngle">Field angle (deg)</label>
+              <input id="fieldAngle" type="number" step="0.1" value="0" />
+            </div>
+
+            <div class="ctrl">
+              <label for="rayCount"># Rays</label>
+              <input id="rayCount" type="number" step="1" value="31" min="3" max="101" />
+            </div>
+
+            <div class="ctrl">
+              <label for="wavePreset">Wavelength</label>
+              <select id="wavePreset">
+                <option value="d">d-line (587.6nm) — simple</option>
+                <option value="g">g-line (blue) — approx</option>
+                <option value="c">c-line (red) — approx</option>
+              </select>
+            </div>
+
+            <div class="ctrl">
+              <label for="sensorOffset">Sensor offset (mm)</label>
+              <input id="sensorOffset" type="number" step="0.05" value="0" />
+            </div>
+
+            <div class="ctrl">
+              <label for="focusMode">Focus mode</label>
+              <select id="focusMode">
+                <option value="cam" selected>Cam focus (move sensor)</option>
+                <option value="lens">Lens focus (move lens)</option>
+              </select>
+            </div>
+
+            <div class="ctrl">
+              <label for="lensFocus">Lens focus (mm)</label>
+              <input id="lensFocus" type="number" step="0.05" value="0" />
+            </div>
+
+            <div class="ctrl">
+              <label for="renderScale">Render scale</label>
+              <input id="renderScale" type="range" min="0.6" max="2.6" step="0.05" value="1.25" />
+            </div>
+
+            <div class="ctrl two ctrlDivider"></div>
+
+            <div class="ctrl two">
+              <div class="subTitle">Zoom Builder</div>
+              <div class="hint" style="margin-top:6px">
+                Stel wide/tele in, scrub de slider en laat de lens naar de gekozen zoom-stand schalen.
+              </div>
+            </div>
+
+            <div class="ctrl">
+              <label for="zoomWideFL">Wide FL (mm)</label>
+              <input id="zoomWideFL" type="number" step="0.1" min="5" value="24" />
+            </div>
+
+            <div class="ctrl">
+              <label for="zoomTeleFL">Tele FL (mm)</label>
+              <input id="zoomTeleFL" type="number" step="0.1" min="5" value="70" />
+            </div>
+
+            <div class="ctrl two">
+              <label for="zoomPos">Zoom positie: <span id="zoomPosOut">0%</span></label>
+              <input id="zoomPos" type="range" min="0" max="100" step="1" value="0" />
+            </div>
+
+            <div class="ctrl">
+              <label for="zoomAutoFocus">Auto-focus na zoom</label>
+              <input id="zoomAutoFocus" type="checkbox" checked />
+            </div>
+
+            <div class="ctrl">
+              <label>Zoom target</label>
+              <div id="zoomTargetOut" class="zoomReadout">24.0mm</div>
+            </div>
+
+            <div class="ctrl two">
+              <div class="cockpitBtnGrid cockpitSnapGrid">
+                <button id="btnZoomApplyNow" class="btn btnPrimary" type="button">Apply zoom position</button>
+                <button id="btnZoomSyncRange" class="btn" type="button">Sync range → target FL</button>
+              </div>
+              <div id="zoomRatioOut" class="hint" style="margin-top:8px">Zoom ratio: 2.92x</div>
+            </div>
+
+            <div class="ctrl two ctrlDivider"></div>
+
+            <div class="ctrl two">
+              <div class="subTitle">Optimizer</div>
+              <div class="hint" style="margin-top:6px">Merit is 'lager = beter'. Optimizer probeert random + slimme mutaties en bewaart beste design.</div>
+            </div>
+
+            <div class="ctrl">
+              <label for="optTargetFL">Target FL (mm)</label>
+              <input id="optTargetFL" type="number" step="0.1" value="75" />
+            </div>
+
+            <div class="ctrl">
+              <label for="optTargetT">Target T</label>
+              <input id="optTargetT" type="number" step="0.05" value="2.0" />
+            </div>
+
+            <div class="ctrl">
+              <label for="optTargetIC">Target IC (mm)</label>
+              <input id="optTargetIC" type="number" step="0.1" value="0" min="0" />
+            </div>
+
+            <div class="ctrl">
+              <label for="optIters">Iterations</label>
+              <input id="optIters" type="number" step="1" value="2000" min="10" />
+            </div>
+
+            <div class="ctrl">
+              <label for="distOptIters">Distortion iterations</label>
+              <input id="distOptIters" type="number" step="1" value="12000" min="50" />
+            </div>
+
+            <div class="ctrl">
+              <label for="optPop">Exploration</label>
+              <select id="optPop">
+                <option value="safe" selected>Safe</option>
+                <option value="wild">Wild</option>
+              </select>
+            </div>
+
+            <div class="ctrl">
+              <label for="optAutoApply">Auto-apply Dist/Sharp</label>
+              <input id="optAutoApply" type="checkbox" />
+            </div>
+
+            <div class="ctrl two">
+              <label for="optLog">Optimizer log</label>
+              <textarea id="optLog" class="glassNote" rows="3" readonly>—</textarea>
+            </div>
+
+            <div class="ctrl two ctrlDivider"></div>
+
+            <div class="ctrl two">
+              <div class="subTitle">Optimization Panel</div>
+              <div class="hint" style="margin-top:6px">
+                Baseline + lokale optimizers per parameter. Elke run toont delta en blijft rollbackbaar via snapshots.
+              </div>
+            </div>
+
+            <div class="ctrl two">
+              <div class="cockpitProgressWrap" aria-label="Optimizer progress">
+                <div id="cockpitProgressText" class="cockpitProgressText">Idle</div>
+                <progress id="cockpitProgress" max="1" value="0"></progress>
+              </div>
+            </div>
+
+            <div class="ctrl two">
+              <table class="cockpitMetricsTbl" aria-label="Live optimization metrics">
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th>Current</th>
+                    <th>Delta vs baseline</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Focal Length (mm)</td>
+                    <td id="cockpitValEfl">—</td>
+                    <td id="cockpitDeltaEfl" class="cockpitDelta">—</td>
+                  </tr>
+                  <tr>
+                    <td>BFL (mm)</td>
+                    <td id="cockpitValBfl">—</td>
+                    <td id="cockpitDeltaBfl" class="cockpitDelta">—</td>
+                  </tr>
+                  <tr>
+                    <td>T (approx)</td>
+                    <td id="cockpitValT">—</td>
+                    <td id="cockpitDeltaT" class="cockpitDelta">—</td>
+                  </tr>
+                  <tr>
+                    <td>Coverage</td>
+                    <td id="cockpitValCov">—</td>
+                    <td id="cockpitDeltaCov" class="cockpitDelta">—</td>
+                  </tr>
+                  <tr>
+                    <td>IC</td>
+                    <td id="cockpitValIc">—</td>
+                    <td id="cockpitDeltaIc" class="cockpitDelta">—</td>
+                  </tr>
+                  <tr>
+                    <td>Distortion</td>
+                    <td id="cockpitValDist">—</td>
+                    <td id="cockpitDeltaDist" class="cockpitDelta">—</td>
+                  </tr>
+                  <tr>
+                    <td>Sharpness</td>
+                    <td id="cockpitValSharp">—</td>
+                    <td id="cockpitDeltaSharp" class="cockpitDelta">—</td>
+                  </tr>
+                  <tr>
+                    <td>Physical Correct</td>
+                    <td id="cockpitValFeas">—</td>
+                    <td id="cockpitDeltaFeas" class="cockpitDelta">—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ctrl two">
+              <div class="cockpitBtnGrid">
+                <button id="btnBaselineLens" class="btn btnPrimary" type="button">Make Baseline Lens</button>
+                <button id="btnOptEfl" class="btn" type="button">Optimize Focal Length</button>
+                <button id="btnOptTLocal" class="btn" type="button">Optimize T</button>
+                <button id="btnOptICLocal" class="btn" type="button">Optimize IC</button>
+                <button id="btnOptMeritLocal" class="btn" type="button">Optimize Merit</button>
+                <button id="btnOptApplyLocal" class="btn btnPrimary" type="button">Apply best</button>
+              </div>
+            </div>
+
+            <div class="ctrl two">
+              <div class="cockpitBtnGrid cockpitSnapGrid">
+                <button id="btnSnapshotSave" class="btn" type="button">Save Snapshot</button>
+                <button id="btnSnapshotUndo" class="btn" type="button">Undo</button>
+                <button id="btnSnapshotRedo" class="btn" type="button">Redo</button>
+                <button id="btnSnapshotCompare" class="btn" type="button">Compare Snapshot</button>
+              </div>
+              <div id="cockpitCompareInfo" class="hint" style="margin-top:8px">No baseline yet</div>
+            </div>
+
+            <div class="ctrl two">
+              <details id="cockpitAdvanced" class="cockpitAdvanced">
+                <summary>Advanced diagnostics (open)</summary>
+                <div class="cockpitAdvancedGrid">
+                  <div class="field">
+                    <label for="cockpitIters">Iterations</label>
+                    <input id="cockpitIters" type="number" step="1" min="50" value="2400" />
+                  </div>
+                  <div class="field">
+                    <label for="cockpitStep">Step size</label>
+                    <input id="cockpitStep" type="range" min="0.01" max="0.20" step="0.005" value="0.06" />
+                    <div class="hint">Current: <span id="cockpitStepOut">0.060</span></div>
+                  </div>
+                  <div class="field">
+                    <label for="cockpitSurfaceMode">Allowed surfaces range</label>
+                    <select id="cockpitSurfaceMode">
+                      <option value="auto" selected>Auto</option>
+                      <option value="manual">Manual</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="cockpitStrictness">Constraint strictness</label>
+                    <select id="cockpitStrictness">
+                      <option value="hard_geometry" selected>Hard geometry only</option>
+                      <option value="geometry_mechanics">Geometry + mechanics</option>
+                      <option value="strict_full">Strict full</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="cockpitSurfaceStart">Range start idx</label>
+                    <input id="cockpitSurfaceStart" type="number" step="1" min="1" value="1" />
+                  </div>
+                  <div class="field">
+                    <label for="cockpitSurfaceEnd">Range end idx</label>
+                    <input id="cockpitSurfaceEnd" type="number" step="1" min="1" value="10" />
+                  </div>
+                  <div class="field">
+                    <label for="cockpitMacroPasses">Macro passes</label>
+                    <input id="cockpitMacroPasses" type="number" step="1" min="1" max="3" value="2" />
+                  </div>
+                  <div class="field">
+                    <label for="cockpitAnneal">Use annealing</label>
+                    <input id="cockpitAnneal" type="checkbox" checked />
+                  </div>
+                  <div class="field fieldFull">
+                    <label for="cockpitDiagnostics">Advanced diagnostics</label>
+                    <pre id="cockpitDiagnostics" class="cockpitDiagnostics">—</pre>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+        </section>
+
+        <section class="tableWrap" aria-label="Surface table">
+          <table class="tbl" aria-describedby="surfaceTableHelp">
+            <thead>
+              <tr>
+                <th style="width:42px">#</th>
+                <th style="width:86px">Type</th>
+                <th style="width:110px">Radius R</th>
+                <th style="width:110px">Thickness</th>
+                <th style="width:110px">Aperture</th>
+                <th style="width:170px">Glass</th>
+                <th style="width:70px">Stop?</th>
+              </tr>
+            </thead>
+            <tbody id="surfTbody"></tbody>
+          </table>
+          <div id="surfaceTableHelp" class="srOnly">
+            Gebruik pijltjes/duplicate/delete buttons om geselecteerde surface te beheren.
+          </div>
+        </section>
+      </div>
+
+      <section class="status" aria-label="Status">
+        <div id="statusText" class="statusLine">—</div>
+        <div id="footerWarn" class="warn"></div>
+      </section>
+    </aside>
+
+    <!-- RIGHT (RAYS ONLY) -->
+    <section class="panel right" aria-label="Canvas view">
+      <div class="canvasHeader">
+        <div class="canvasTitle">
+          <div class="h1">Zoom Autodraw</div>
+          <div id="badgeMeritTop" class="pill meritUnderTitle">Merit: —</div>
+        </div>
+
+        <div class="topBadges" aria-label="Top badges">
+          <div id="badgeEflTop" class="pill">Focal Length: —</div>
+          <div id="badgeTTop" class="pill">T-stop: eff — • calc —</div>
+          <div id="badgeSoftICTop" class="pill">IC: —</div>
+          <div id="badgeFovTop" class="pill">FOV: —</div>
+          <div id="badgeDistTop" class="pill">Distortion @0.7D — • gem. —</div>
+          <div id="badgeSharpTop" class="pill">Sharpness C/E — / —</div>
+          <div id="badgeODTop" class="pill">OD front — • max —</div>
+        </div>
+      </div>
+
+      <div class="canvasFrame">
+        <div class="canvasSplit" id="tvlCanvasSplit">
+          <div class="pane" id="raysPane" style="flex:1;">
+            <div class="paneTag">Rays</div>
+            <button id="btnRaysFS" class="fsBtn" type="button" title="Full Screen (R)">Full Screen</button>
+            <canvas id="canvas"></canvas>
+          </div>
+        </div>
+
+        <div class="canvasOverlay">
+          <div class="overlayHelp" id="overlayHelp">
+            Tips: zet stop op “STOP” surface • IMS ap = sensor half-height • gebruik Zoom Builder voor wide ↔ tele
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="newLensModal" class="modal hidden" aria-hidden="true"></div>
+  <div id="elementModal" class="modal hidden" aria-hidden="true"></div>
+
+  <div id="toastHost" class="toastHost" aria-live="polite" aria-atomic="true"></div>
+  <script src="./script.js"></script>
+</body>
+</html>
