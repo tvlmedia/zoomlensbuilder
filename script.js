@@ -75,6 +75,20 @@
     zoomAutoFocus: $("#zoomAutoFocus"),
     btnZoomApplyNow: $("#btnZoomApplyNow"),
     btnZoomSyncRange: $("#btnZoomSyncRange"),
+    groupSelect: $("#groupSelect"),
+    btnGroupAdd: $("#btnGroupAdd"),
+    btnGroupDelete: $("#btnGroupDelete"),
+    groupName: $("#groupName"),
+    groupRole: $("#groupRole"),
+    groupZoomMode: $("#groupZoomMode"),
+    groupEnabled: $("#groupEnabled"),
+    groupMoveWithZoom: $("#groupMoveWithZoom"),
+    groupMoveWithFocus: $("#groupMoveWithFocus"),
+    groupLockGeometry: $("#groupLockGeometry"),
+    groupOffsetStart: $("#groupOffsetStart"),
+    groupOffsetEnd: $("#groupOffsetEnd"),
+    btnGroupAssignSelected: $("#btnGroupAssignSelected"),
+    groupSurfaceInfo: $("#groupSurfaceInfo"),
 
     btnScaleToFocal: $("#btnScaleToFocal"),
     btnSetTStop: $("#btnSetTStop"),
@@ -432,22 +446,295 @@
     };
   }
 
+  const ZOOM_GROUP_ROLE_DEFAULTS = {
+    fixed_front: {
+      role: "fixed_front",
+      enabled: true,
+      moveWithZoom: false,
+      moveWithFocus: false,
+      lockGeometry: false,
+      zoomMode: "fixed",
+      startOffset: 0,
+      endOffset: 0,
+    },
+    variator: {
+      role: "variator",
+      enabled: true,
+      moveWithZoom: true,
+      moveWithFocus: false,
+      lockGeometry: false,
+      zoomMode: "linear",
+      startOffset: 0,
+      endOffset: -6,
+    },
+    compensator: {
+      role: "compensator",
+      enabled: true,
+      moveWithZoom: true,
+      moveWithFocus: false,
+      lockGeometry: false,
+      zoomMode: "linear",
+      startOffset: 0,
+      endOffset: 4,
+    },
+    relay: {
+      role: "relay",
+      enabled: true,
+      moveWithZoom: false,
+      moveWithFocus: false,
+      lockGeometry: false,
+      zoomMode: "fixed",
+      startOffset: 0,
+      endOffset: 0,
+    },
+    fixed_rear: {
+      role: "fixed_rear",
+      enabled: true,
+      moveWithZoom: false,
+      moveWithFocus: false,
+      lockGeometry: false,
+      zoomMode: "fixed",
+      startOffset: 0,
+      endOffset: 0,
+    },
+    focus: {
+      role: "focus",
+      enabled: true,
+      moveWithZoom: false,
+      moveWithFocus: true,
+      lockGeometry: false,
+      zoomMode: "fixed",
+      startOffset: 0,
+      endOffset: 0,
+    },
+  };
+
+  function normalizeGroupRole(v, fallback = "fixed_front") {
+    const k = String(v || "").trim().toLowerCase();
+    if (k && Object.prototype.hasOwnProperty.call(ZOOM_GROUP_ROLE_DEFAULTS, k)) return k;
+    return Object.prototype.hasOwnProperty.call(ZOOM_GROUP_ROLE_DEFAULTS, fallback) ? fallback : "fixed_front";
+  }
+
+  function normalizeGroupId(v, fallback = "") {
+    const raw = String(v || "").trim().toLowerCase();
+    const cleaned = raw.replace(/[^a-z0-9_\-]+/g, "_").replace(/^_+|_+$/g, "");
+    if (cleaned) return cleaned;
+    return String(fallback || "").trim().toLowerCase().replace(/[^a-z0-9_\-]+/g, "_").replace(/^_+|_+$/g, "");
+  }
+
+  function normalizeZoomMode(v) {
+    return String(v || "fixed").trim().toLowerCase() === "linear" ? "linear" : "fixed";
+  }
+
+  function groupRoleDefaults(role) {
+    const key = normalizeGroupRole(role, "fixed_front");
+    return clone(ZOOM_GROUP_ROLE_DEFAULTS[key] || ZOOM_GROUP_ROLE_DEFAULTS.fixed_front);
+  }
+
+  function makeZoomGroup(id, role = "fixed_front", patch = null) {
+    const gid = normalizeGroupId(id, "grp");
+    const defs = groupRoleDefaults(role);
+    const raw = patch || {};
+    const zoomRaw = raw.zoom || {};
+    return {
+      id: gid,
+      name: String(raw.name || gid),
+      role: normalizeGroupRole(raw.role || defs.role, defs.role),
+      enabled: Object.prototype.hasOwnProperty.call(raw, "enabled") ? !!raw.enabled : !!defs.enabled,
+      moveWithZoom: Object.prototype.hasOwnProperty.call(raw, "moveWithZoom") ? !!raw.moveWithZoom : !!defs.moveWithZoom,
+      moveWithFocus: Object.prototype.hasOwnProperty.call(raw, "moveWithFocus") ? !!raw.moveWithFocus : !!defs.moveWithFocus,
+      lockGeometry: Object.prototype.hasOwnProperty.call(raw, "lockGeometry") ? !!raw.lockGeometry : !!defs.lockGeometry,
+      zoom: {
+        mode: normalizeZoomMode(zoomRaw.mode ?? raw.zoomMode ?? defs.zoomMode),
+        startOffset: Number.isFinite(Number(zoomRaw.startOffset ?? raw.startOffset))
+          ? Number(zoomRaw.startOffset ?? raw.startOffset)
+          : Number(defs.startOffset),
+        endOffset: Number.isFinite(Number(zoomRaw.endOffset ?? raw.endOffset))
+          ? Number(zoomRaw.endOffset ?? raw.endOffset)
+          : Number(defs.endOffset),
+        curveStrength: Number.isFinite(Number(zoomRaw.curveStrength))
+          ? Number(zoomRaw.curveStrength)
+          : 1,
+      },
+    };
+  }
+
+  function sanitizeZoomGroupMap(rawGroups) {
+    const out = {};
+    const src = rawGroups && typeof rawGroups === "object" ? rawGroups : {};
+    for (const [k, v] of Object.entries(src)) {
+      const gid = normalizeGroupId(k, normalizeGroupId(v?.id, ""));
+      if (!gid) continue;
+      out[gid] = makeZoomGroup(gid, v?.role || "fixed_front", v || {});
+    }
+    return out;
+  }
+
+  function sanitizeZoomConfig(raw = {}) {
+    const wide0 = clamp(Math.abs(num(raw?.wideFL, ZOOM_BUILDER_CFG.defaultWide)), ZOOM_BUILDER_CFG.minFl, ZOOM_BUILDER_CFG.maxFl);
+    const tele0 = clamp(Math.abs(num(raw?.teleFL, Math.max(wide0, ZOOM_BUILDER_CFG.defaultTele))), ZOOM_BUILDER_CFG.minFl, ZOOM_BUILDER_CFG.maxFl);
+    const wide = Math.min(wide0, tele0);
+    const tele = Math.max(wide0, tele0);
+    const offsetsIn = raw?.appliedGroupOffsets && typeof raw.appliedGroupOffsets === "object"
+      ? raw.appliedGroupOffsets
+      : {};
+    const offsetsOut = {};
+    for (const [k, v] of Object.entries(offsetsIn)) {
+      const gid = normalizeGroupId(k, "");
+      if (!gid) continue;
+      const n = Number(v);
+      offsetsOut[gid] = Number.isFinite(n) ? n : 0;
+    }
+    return {
+      wideFL: wide,
+      teleFL: tele,
+      pos: clamp(num(raw?.pos, 0), 0, 1),
+      selectedGroupId: normalizeGroupId(raw?.selectedGroupId, ""),
+      focusGroupId: normalizeGroupId(raw?.focusGroupId, ""),
+      movementScale: clamp(num(raw?.movementScale, 1), 0, 4),
+      enabled: raw?.enabled !== false,
+      autoFocusAfterZoom: raw?.autoFocusAfterZoom !== false,
+      appliedGroupOffsets: offsetsOut,
+      lastValidScale: clamp(num(raw?.lastValidScale, 1), 0, 1),
+    };
+  }
+
+  function isObjOrImsSurface(surface) {
+    const t = String(surface?.type || "").toUpperCase();
+    return t === "OBJ" || t === "IMS";
+  }
+
+  function defaultGroupForSurface(surface, rank = 0, total = 1) {
+    const t = String(surface?.type || "").toUpperCase();
+    if (t === "OBJ") return { id: "obj_fixed", role: "fixed_front" };
+    if (t === "IMS") return { id: "ims_fixed", role: "fixed_rear" };
+    if (total <= 1) return { id: "fixed_front", role: "fixed_front" };
+    const r = clamp((rank + 1) / Math.max(1, total), 0, 1);
+    if (r <= 0.36) return { id: "fixed_front", role: "fixed_front" };
+    if (r <= 0.72) return { id: "variator", role: "variator" };
+    return { id: "compensator", role: "compensator" };
+  }
+
+  function bootstrapSurfaceGroups(surfaces) {
+    if (!Array.isArray(surfaces)) return;
+    const phys = [];
+    for (let i = 0; i < surfaces.length; i++) {
+      if (isObjOrImsSurface(surfaces[i])) continue;
+      phys.push(i);
+    }
+    for (let i = 0; i < surfaces.length; i++) {
+      const s = surfaces[i];
+      const t = String(s?.type || "").toUpperCase();
+      if (t === "OBJ") {
+        s.groupId = "obj_fixed";
+        s.groupRole = "fixed_front";
+        s.moveWithZoom = false;
+        s.moveWithFocus = false;
+        s.lockGeometry = true;
+      } else if (t === "IMS") {
+        s.groupId = "ims_fixed";
+        s.groupRole = "fixed_rear";
+        s.moveWithZoom = false;
+        s.moveWithFocus = false;
+        s.lockGeometry = true;
+      }
+    }
+    for (let r = 0; r < phys.length; r++) {
+      const idx = phys[r];
+      const s = surfaces[idx];
+      const d = defaultGroupForSurface(s, r, phys.length);
+      const defs = groupRoleDefaults(d.role);
+      s.groupId = d.id;
+      s.groupRole = d.role;
+      s.moveWithZoom = !!defs.moveWithZoom;
+      s.moveWithFocus = !!defs.moveWithFocus;
+      s.lockGeometry = !!defs.lockGeometry;
+    }
+  }
+
+  function ensureLensZoomModel(lensObj) {
+    if (!lensObj || !Array.isArray(lensObj.surfaces)) return lensObj;
+    lensObj.groups = sanitizeZoomGroupMap(lensObj.groups);
+    lensObj.zoomConfig = sanitizeZoomConfig(lensObj.zoomConfig || {});
+
+    const phys = lensObj.surfaces.filter((s) => !isObjOrImsSurface(s));
+    const hasGroups = phys.some((s) => !!normalizeGroupId(s?.groupId, ""));
+    if (!hasGroups) bootstrapSurfaceGroups(lensObj.surfaces);
+
+    let physRank = 0;
+    const physTotal = Math.max(1, phys.length);
+    for (let i = 0; i < lensObj.surfaces.length; i++) {
+      const s = lensObj.surfaces[i];
+      const t = String(s?.type || "").toUpperCase();
+      const d = defaultGroupForSurface(s, physRank, physTotal);
+      if (t !== "OBJ" && t !== "IMS") physRank++;
+
+      const gid = normalizeGroupId(s?.groupId, d.id);
+      const role = normalizeGroupRole(s?.groupRole, d.role);
+      const defs = groupRoleDefaults(role);
+      s.groupId = gid || d.id;
+      s.groupRole = role;
+      s.moveWithZoom = Object.prototype.hasOwnProperty.call(s, "moveWithZoom")
+        ? !!s.moveWithZoom
+        : !!defs.moveWithZoom;
+      s.moveWithFocus = Object.prototype.hasOwnProperty.call(s, "moveWithFocus")
+        ? !!s.moveWithFocus
+        : !!defs.moveWithFocus;
+      s.lockGeometry = Object.prototype.hasOwnProperty.call(s, "lockGeometry")
+        ? !!s.lockGeometry
+        : !!defs.lockGeometry;
+
+      if (!lensObj.groups[s.groupId]) {
+        lensObj.groups[s.groupId] = makeZoomGroup(s.groupId, role);
+      }
+    }
+
+    if (!lensObj.groups.obj_fixed) lensObj.groups.obj_fixed = makeZoomGroup("obj_fixed", "fixed_front", { moveWithZoom: false, lockGeometry: true });
+    if (!lensObj.groups.ims_fixed) lensObj.groups.ims_fixed = makeZoomGroup("ims_fixed", "fixed_rear", { moveWithZoom: false, lockGeometry: true });
+
+    const selectedGroupId = normalizeGroupId(lensObj.zoomConfig.selectedGroupId, "");
+    if (!selectedGroupId || !lensObj.groups[selectedGroupId]) {
+      const first = Object.keys(lensObj.groups)[0] || "fixed_front";
+      lensObj.zoomConfig.selectedGroupId = first;
+      if (!lensObj.groups[first]) lensObj.groups[first] = makeZoomGroup(first, "fixed_front");
+    }
+    const sanitizedOffsets = {};
+    for (const [k, v] of Object.entries(lensObj.zoomConfig.appliedGroupOffsets || {})) {
+      const gid = normalizeGroupId(k, "");
+      if (!gid || !lensObj.groups[gid]) continue;
+      const off = Number(v);
+      sanitizedOffsets[gid] = Number.isFinite(off) ? off : 0;
+    }
+    lensObj.zoomConfig.appliedGroupOffsets = sanitizedOffsets;
+    return lensObj;
+  }
+
   // -------------------- sanitize/load --------------------
   function sanitizeLens(obj) {
     const safe = {
       name: String(obj?.name ?? "No name"),
       notes: Array.isArray(obj?.notes) ? obj.notes.map(String) : [],
       surfaces: Array.isArray(obj?.surfaces) ? obj.surfaces : [],
+      groups: obj?.groups && typeof obj.groups === "object" ? clone(obj.groups) : {},
+      zoomConfig: obj?.zoomConfig && typeof obj.zoomConfig === "object" ? clone(obj.zoomConfig) : {},
     };
 
-    safe.surfaces = safe.surfaces.map((s) => ({
-      type: String(s?.type ?? ""),
-      R: Number(s?.R ?? 0),
-      t: Number(s?.t ?? 0),
-      ap: Number(s?.ap ?? 10),
-      glass: String(s?.glass ?? "AIR"),
-      stop: Boolean(s?.stop ?? false),
-    }));
+    safe.surfaces = safe.surfaces.map((s) => {
+      const row = {
+        type: String(s?.type ?? ""),
+        R: Number(s?.R ?? 0),
+        t: Number(s?.t ?? 0),
+        ap: Number(s?.ap ?? 10),
+        glass: String(s?.glass ?? "AIR"),
+        stop: Boolean(s?.stop ?? false),
+        groupId: normalizeGroupId(s?.groupId, ""),
+        groupRole: normalizeGroupRole(s?.groupRole, "fixed_front"),
+      };
+      if (Object.prototype.hasOwnProperty.call(s || {}, "moveWithZoom")) row.moveWithZoom = !!s.moveWithZoom;
+      if (Object.prototype.hasOwnProperty.call(s || {}, "moveWithFocus")) row.moveWithFocus = !!s.moveWithFocus;
+      if (Object.prototype.hasOwnProperty.call(s || {}, "lockGeometry")) row.lockGeometry = !!s.lockGeometry;
+      return row;
+    });
 
     const firstStop = safe.surfaces.findIndex((s) => s.stop);
     if (firstStop >= 0) safe.surfaces.forEach((s, i) => { if (i !== firstStop) s.stop = false; });
@@ -457,12 +744,26 @@
     if (safe.surfaces.length >= 1) {
       safe.surfaces[0].type = "OBJ";
       safe.surfaces[0].t = 0.0;
+      safe.surfaces[0].groupId = "obj_fixed";
+      safe.surfaces[0].groupRole = "fixed_front";
+      safe.surfaces[0].moveWithZoom = false;
+      safe.surfaces[0].moveWithFocus = false;
+      safe.surfaces[0].lockGeometry = true;
     }
-    if (safe.surfaces.length >= 1) safe.surfaces[safe.surfaces.length - 1].type = "IMS";
+    if (safe.surfaces.length >= 1) {
+      const last = safe.surfaces[safe.surfaces.length - 1];
+      last.type = "IMS";
+      last.groupId = "ims_fixed";
+      last.groupRole = "fixed_rear";
+      last.moveWithZoom = false;
+      last.moveWithFocus = false;
+      last.lockGeometry = true;
+    }
 
     // resolve glass names
     safe.surfaces.forEach((s) => { s.glass = resolveGlassName(s.glass); });
 
+    ensureLensZoomModel(safe);
     return safe;
   }
 
@@ -491,8 +792,14 @@
     lens = sanitizeLens(obj);
     selectedIndex = 0;
     clampAllApertures(lens.surfaces);
+    if (ui.zoomWideFL) ui.zoomWideFL.value = Number(lens?.zoomConfig?.wideFL ?? ZOOM_BUILDER_CFG.defaultWide).toFixed(2);
+    if (ui.zoomTeleFL) ui.zoomTeleFL.value = Number(lens?.zoomConfig?.teleFL ?? ZOOM_BUILDER_CFG.defaultTele).toFixed(2);
+    if (ui.zoomPos) ui.zoomPos.value = String(Math.round(clamp(num(lens?.zoomConfig?.pos, 0), 0, 1) * 100));
     buildTable();
+    refreshGroupManagerUi({ preferGroupId: lens?.zoomConfig?.selectedGroupId || "" });
     applySensorToIMS();
+    updateZoomReadouts();
+    applyZoomState(num(lens?.zoomConfig?.pos, 0), { render: false, save: false, syncUi: true, toast: false });
     renderAll();
     scheduleAutosave();
   }
@@ -567,6 +874,9 @@
             ).join("")}
           </select>
         </td>
+        <td style="width:96px">
+          <input class="cellInput" data-k="groupId" data-i="${idx}" value="${s.groupId || ""}" ${isOBJ || isIMS ? "disabled" : ""}>
+        </td>
         <td class="cellChk" style="width:58px">
           <input type="checkbox" data-k="stop" data-i="${idx}" ${s.stop ? "checked" : ""}>
         </td>
@@ -587,6 +897,7 @@
     ui.tbody.querySelectorAll('input[type="checkbox"][data-k="stop"]').forEach((el) => el.addEventListener("change", onCellCommit));
 
     restoreTableFocus();
+    refreshGroupManagerUi();
   }
 
   function onCellInput(e) {
@@ -609,8 +920,17 @@
 
     if (k === "type") s.type = el.value;
     else if (k === "R" || k === "t" || k === "ap") s[k] = num(el.value, s[k] ?? 0);
+    else if (k === "groupId") {
+      const gid = normalizeGroupId(el.value, s.groupId || "");
+      s.groupId = gid;
+      if (gid && !lens.groups?.[gid]) {
+        ensureLensZoomModel(lens);
+        lens.groups[gid] = makeZoomGroup(gid, "fixed_front");
+      }
+    }
 
     applySensorToIMS();
+    if (k === "groupId") refreshGroupManagerUi({ preferGroupId: s.groupId || "" });
     scheduleRenderAll();
     scheduleAutosave();
   }
@@ -638,13 +958,31 @@
       s.glass = resolveGlassName(String(el.value || "AIR"));
     } else if (k === "type") {
       s.type = String(el.value || "");
+    } else if (k === "groupId") {
+      const d = defaultGroupForSurface(s, 0, 1);
+      const gid = normalizeGroupId(el.value, normalizeGroupId(s.groupId, d.id));
+      s.groupId = gid || d.id;
+      if (!lens.groups?.[s.groupId]) {
+        ensureLensZoomModel(lens);
+        lens.groups[s.groupId] = makeZoomGroup(s.groupId, s.groupRole || d.role);
+      }
+      const g = lens.groups[s.groupId];
+      s.groupRole = normalizeGroupRole(s.groupRole || g?.role, d.role);
+      if (g) {
+        s.moveWithZoom = !!g.moveWithZoom;
+        s.moveWithFocus = !!g.moveWithFocus;
+        s.lockGeometry = !!g.lockGeometry;
+      }
+      el.value = s.groupId;
     } else if (k === "R" || k === "t" || k === "ap") {
       s[k] = num(el.value, s[k] ?? 0);
     }
 
+    ensureLensZoomModel(lens);
     applySensorToIMS();
     clampAllApertures(lens.surfaces);
     buildTable();
+    refreshGroupManagerUi({ preferGroupId: s.groupId || lens?.zoomConfig?.selectedGroupId || "" });
     renderAll();
     scheduleAutosave();
   }
@@ -767,11 +1105,48 @@
     return { hit, t: best.t, vignetted, normal: Nout };
   }
 
-  function computeVertices(surfaces, lensShift = 0, sensorX = 0) {
+  function computeVertices(surfaces, lensShift = 0, sensorX = 0, placement = null) {
     let x = 0;
     for (let i = 0; i < surfaces.length; i++) {
       surfaces[i].vx = x;
       x += Number(surfaces[i].t || 0);
+    }
+
+    const activePlacement = resolveZoomPlacementForSurfaces(surfaces, placement);
+    const zoomOffsets = resolveZoomOffsetsForSurfaces(surfaces, activePlacement);
+    if (zoomOffsets) {
+      for (let i = 0; i < surfaces.length; i++) {
+        const s = surfaces[i];
+        const t = String(s?.type || "").toUpperCase();
+        if (t === "OBJ" || t === "IMS") continue;
+        const gid = normalizeGroupId(s?.groupId, "");
+        if (!gid) continue;
+        const moveWithZoom = Object.prototype.hasOwnProperty.call(s, "moveWithZoom")
+          ? !!s.moveWithZoom
+          : true;
+        if (!moveWithZoom) continue;
+        const off = Number(zoomOffsets[gid] || 0);
+        if (Number.isFinite(off) && Math.abs(off) > 1e-12) s.vx += off;
+      }
+    }
+
+    const focusOffsets = (activePlacement && activePlacement.focusGroupOffsets && typeof activePlacement.focusGroupOffsets === "object")
+      ? activePlacement.focusGroupOffsets
+      : null;
+    if (focusOffsets) {
+      for (let i = 0; i < surfaces.length; i++) {
+        const s = surfaces[i];
+        const t = String(s?.type || "").toUpperCase();
+        if (t === "OBJ" || t === "IMS") continue;
+        const gid = normalizeGroupId(s?.groupId, "");
+        if (!gid) continue;
+        const moveWithFocus = Object.prototype.hasOwnProperty.call(s, "moveWithFocus")
+          ? !!s.moveWithFocus
+          : false;
+        if (!moveWithFocus) continue;
+        const off = Number(focusOffsets[gid] || 0);
+        if (Number.isFinite(off) && Math.abs(off) > 1e-12) s.vx += off;
+      }
     }
 
     const imsIdx = surfaces.findIndex((s) => String(s?.type || "").toUpperCase() === "IMS");
@@ -1971,6 +2346,64 @@
   let _cockpitMetricsCacheKey = "";
   let _cockpitMetricsCacheVal = null;
 
+  function resolveZoomPlacementForSurfaces(sourceSurfaces, placement = null) {
+    if (placement && typeof placement === "object") return placement;
+    if (sourceSurfaces && typeof sourceSurfaces === "object") {
+      const tagged = sourceSurfaces.__zoomPlacement;
+      if (tagged && typeof tagged === "object") return tagged;
+    }
+    if (sourceSurfaces === lens?.surfaces) {
+      const zc = lens?.zoomConfig;
+      if (zc?.enabled === false) return { disableZoom: true };
+      if (zc?.appliedGroupOffsets && typeof zc.appliedGroupOffsets === "object") {
+        return { groupOffsets: zc.appliedGroupOffsets };
+      }
+    }
+    return null;
+  }
+
+  function attachZoomPlacementToSurfaces(surfaces, placement = null) {
+    if (!Array.isArray(surfaces)) return surfaces;
+    if (placement && typeof placement === "object") {
+      surfaces.__zoomPlacement = placement;
+    } else {
+      try { delete surfaces.__zoomPlacement; } catch (_) { surfaces.__zoomPlacement = null; }
+    }
+    return surfaces;
+  }
+
+  function resolveZoomOffsetsForSurfaces(surfaces, placement = null) {
+    const activePlacement = resolveZoomPlacementForSurfaces(surfaces, placement);
+    if (!activePlacement || activePlacement.disableZoom) return null;
+    const offsets = activePlacement.groupOffsets;
+    return offsets && typeof offsets === "object" ? offsets : null;
+  }
+
+  function zoomOffsetSignatureForSurfaces(surfaces, placement = null) {
+    if (!Array.isArray(surfaces) || !surfaces.length) return "none";
+    const offsets = resolveZoomOffsetsForSurfaces(surfaces, placement);
+    if (!offsets) return "none";
+    const parts = [];
+    const seen = new Set();
+    for (let i = 0; i < surfaces.length; i++) {
+      const s = surfaces[i];
+      const t = String(s?.type || "").toUpperCase();
+      if (t === "OBJ" || t === "IMS") continue;
+      const gid = normalizeGroupId(s?.groupId, "");
+      if (!gid || seen.has(gid)) continue;
+      const moveWithZoom = Object.prototype.hasOwnProperty.call(s || {}, "moveWithZoom")
+        ? !!s.moveWithZoom
+        : true;
+      if (!moveWithZoom) continue;
+      seen.add(gid);
+      const off = Number(offsets[gid] || 0);
+      parts.push(`${gid}:${Number.isFinite(off) ? off.toFixed(6) : "0.000000"}`);
+    }
+    if (!parts.length) return "none";
+    parts.sort();
+    return parts.join("|");
+  }
+
   function chiefRadiusAtFieldDeg(workSurfaces, fieldDeg, wavePreset, sensorX) {
     const chief = buildChiefRay(workSurfaces, fieldDeg);
     const tr = traceRayForward(clone(chief), workSurfaces, wavePreset);
@@ -2127,7 +2560,8 @@
     const sensorX = 0.0;
     const halfDiag = 0.5 * Math.hypot(sensorW, sensorH);
     const ov = Math.max(1.0, Number(cfg.bgOverscan || 1.6));
-    const work = clone(surfaces);
+    const activePlacement = resolveZoomPlacementForSurfaces(surfaces, focusOpts?.placement || null);
+    const work = attachZoomPlacementToSurfaces(clone(surfaces), activePlacement);
     const useFocusedGeometry = !!focusOpts?.useCurrentGeometry;
     let lensShift = Number(focusOpts?.lensShift || 0);
 
@@ -2150,7 +2584,9 @@
       }
 
       lensShift = af.shift;
-      computeVertices(work, lensShift, sensorX);
+      computeVertices(work, lensShift, sensorX, activePlacement);
+    } else {
+      computeVertices(work, lensShift, sensorX, activePlacement);
     }
 
     const stopIdx = findStopSurfaceIndex(work);
@@ -2262,6 +2698,7 @@
     doCA = false,
     sensorW = null,
     sensorH = null,
+    placement = null,
   } = {}) {
     if (!Array.isArray(surfaces) || surfaces.length < 3) return null;
 
@@ -2269,9 +2706,10 @@
     const wMm = Number.isFinite(sensorW) ? Number(sensorW) : Number(sensor.w || 36.7);
     const hMm = Number.isFinite(sensorH) ? Number(sensorH) : Number(sensor.h || 25.54);
     const halfDiag = 0.5 * Math.hypot(wMm, hMm);
-    const work = clone(surfaces);
+    const activePlacement = resolveZoomPlacementForSurfaces(surfaces, placement);
+    const work = attachZoomPlacementToSurfaces(clone(surfaces), activePlacement);
 
-    computeVertices(work, Number(lensShift || 0), Number(sensorX || 0));
+    computeVertices(work, Number(lensShift || 0), Number(sensorX || 0), activePlacement);
     const stopIdx = findStopSurfaceIndex(work);
     if (stopIdx < 0) return null;
     const stopSurf = work[stopIdx];
@@ -2442,6 +2880,7 @@
 
   function getLutOnlyCached(params = {}) {
     const surfaces = params?.surfaces || [];
+    const placement = resolveZoomPlacementForSurfaces(surfaces, params?.placement || null);
     const keyObj = {
       wavePreset: String(params?.wavePreset || "d"),
       sensorX: Number(params?.sensorX || 0).toFixed(6),
@@ -2452,6 +2891,7 @@
       doCA: !!params?.doCA,
       sensorW: Number(params?.sensorW || 0).toFixed(4),
       sensorH: Number(params?.sensorH || 0).toFixed(4),
+      zoomSig: zoomOffsetSignatureForSurfaces(surfaces, placement),
       surfaces: surfaces.map((s) => ({
         type: String(s?.type || ""),
         R: Number(s?.R || 0).toFixed(6),
@@ -2464,7 +2904,10 @@
     };
     const key = JSON.stringify(keyObj);
     if (key === _lutOnlyCacheKey && _lutOnlyCacheVal) return _lutOnlyCacheVal;
-    const val = buildLUTOnly(params);
+    const val = buildLUTOnly({
+      ...params,
+      placement,
+    });
     _lutOnlyCacheKey = key;
     _lutOnlyCacheVal = val;
     return val;
@@ -2837,7 +3280,8 @@
     const cfg = SOFT_IC_CFG;
     const sensorX = 0.0;
     const halfDiag = 0.5 * Math.hypot(sensorW, sensorH);
-    const work = clone(surfaces);
+    const activePlacement = resolveZoomPlacementForSurfaces(surfaces, null);
+    const work = attachZoomPlacementToSurfaces(clone(surfaces), activePlacement);
 
     const af = bestLensShiftForDesign(work, 0, rayCount, wavePreset);
     if (!af.ok) {
@@ -2858,7 +3302,7 @@
     }
 
     const lensShift = af.shift;
-    computeVertices(work, lensShift, sensorX);
+    computeVertices(work, lensShift, sensorX, activePlacement);
 
     const centerPack = traceBundleAtFieldForSoftIc(work, 0, wavePreset, sensorX, cfg.raysPerBundle);
     const centerLocalFrac = Math.max(cfg.eps, Number(centerPack.localFrac || 0));
@@ -3028,6 +3472,7 @@
   }
 
   function getSoftIcForCurrentLens(surfaces, sensorW, sensorH, wavePreset, rayCount) {
+    const placement = resolveZoomPlacementForSurfaces(surfaces, null);
     const keyObj = {
       wavePreset,
       rayCount,
@@ -3041,6 +3486,7 @@
         bgObjDistMm: Number(SOFT_IC_CFG.bgObjDistMm).toFixed(2),
         smoothingHalfWindow: Number(SOFT_IC_CFG.smoothingHalfWindow).toFixed(0),
       },
+      zoomSig: zoomOffsetSignatureForSurfaces(surfaces, placement),
       surfaces: (surfaces || []).map((s) => ({
         type: String(s.type || ""),
         R: Number(s.R || 0).toFixed(6),
@@ -3052,7 +3498,15 @@
     };
     const key = JSON.stringify(keyObj);
     if (key === _softIcCacheKey && _softIcCacheVal) return _softIcCacheVal;
-    const val = estimateUsableCircleBackgroundLut(surfaces, sensorW, sensorH, wavePreset, rayCount);
+    const val = estimateUsableCircleBackgroundLut(
+      surfaces,
+      sensorW,
+      sensorH,
+      wavePreset,
+      rayCount,
+      null,
+      { placement }
+    );
     _softIcCacheKey = key;
     _softIcCacheVal = val;
     return val;
@@ -3165,6 +3619,7 @@
     mode = "d",
     fracs = null
   ) {
+    const placement = resolveZoomPlacementForSurfaces(surfaces, null);
     const fractions = Array.isArray(fracs) && fracs.length
       ? fracs.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0)
       : [0.25, 0.55, 0.85, 1.00];
@@ -3176,6 +3631,7 @@
       efl: Number(efl || 0).toFixed(6),
       mode: String(mode || "d"),
       fracs: fractions.map((x) => Number(x).toFixed(4)),
+      zoomSig: zoomOffsetSignatureForSurfaces(surfaces, placement),
       surfaces: (surfaces || []).map((s) => ({
         type: String(s?.type || ""),
         R: Number(s?.R || 0).toFixed(6),
@@ -3709,10 +4165,12 @@
 
   function getRealismPenaltyCached(surfaces, targets = {}) {
     const t = targets || {};
+    const placement = resolveZoomPlacementForSurfaces(surfaces, null);
     const keyObj = {
       targetIC: Number(t.targetIC || 0).toFixed(4),
       sensorW: Number(t.sensorW || 0).toFixed(4),
       sensorH: Number(t.sensorH || 0).toFixed(4),
+      zoomSig: zoomOffsetSignatureForSurfaces(surfaces, placement),
       surfaces: (surfaces || []).map((s) => ({
         type: String(s?.type || ""),
         R: Number(s?.R || 0).toFixed(6),
@@ -3819,6 +4277,7 @@
       zoomTeleFL: ui.zoomTeleFL?.value || String(ZOOM_BUILDER_CFG.defaultTele),
       zoomPos: ui.zoomPos?.value || "0",
       zoomAutoFocus: !!ui.zoomAutoFocus?.checked,
+      groupSelected: ui.groupSelect?.value || "",
       optTargetFL: ui.optTargetFL?.value || "75",
       optTargetT: ui.optTargetT?.value || "2.0",
       optTargetIC: ui.optTargetIC?.value || "0",
@@ -3853,6 +4312,7 @@
     set(ui.zoomWideFL, snap.zoomWideFL);
     set(ui.zoomTeleFL, snap.zoomTeleFL);
     set(ui.zoomPos, snap.zoomPos);
+    set(ui.groupSelect, snap.groupSelected);
     set(ui.optTargetFL, snap.optTargetFL);
     set(ui.optTargetT, snap.optTargetT);
     set(ui.optTargetIC, snap.optTargetIC);
@@ -3878,6 +4338,7 @@
     markCockpitStepLabel();
     syncCockpitRangeInputs();
     updateZoomReadouts();
+    refreshGroupManagerUi({ preferGroupId: snap.groupSelected || "" });
   }
 
   let _autosaveTimer = 0;
@@ -3908,8 +4369,14 @@
       lens = sanitizeLens(payload.lens);
       selectedIndex = 0;
       clampAllApertures(lens.surfaces);
+      if (ui.zoomWideFL) ui.zoomWideFL.value = Number(lens?.zoomConfig?.wideFL ?? num(ui.zoomWideFL?.value, ZOOM_BUILDER_CFG.defaultWide)).toFixed(2);
+      if (ui.zoomTeleFL) ui.zoomTeleFL.value = Number(lens?.zoomConfig?.teleFL ?? num(ui.zoomTeleFL?.value, ZOOM_BUILDER_CFG.defaultTele)).toFixed(2);
+      if (ui.zoomPos) ui.zoomPos.value = String(Math.round(clamp(num(lens?.zoomConfig?.pos, num(ui.zoomPos?.value, 0) / 100), 0, 1) * 100));
       buildTable();
+      refreshGroupManagerUi({ preferGroupId: lens?.zoomConfig?.selectedGroupId || "" });
       applySensorToIMS();
+      updateZoomReadouts();
+      applyZoomState(num(lens?.zoomConfig?.pos, 0), { render: false, save: false, syncUi: true, toast: false });
       renderAll();
       toast("Autosave restored");
       return true;
@@ -7060,6 +7527,7 @@
       const s = lens.surfaces[i];
       const t = String(s.type || "").toUpperCase();
       if (t === "OBJ" || t === "IMS") continue;
+      if (s.lockGeometry) continue;
 
       s.R = Number(s.R) * k;
       s.t = Number(s.t) * k;
@@ -7093,7 +7561,134 @@
     if (tele < wide) [wide, tele] = [tele, wide];
     ui.zoomWideFL.value = wide.toFixed(2);
     ui.zoomTeleFL.value = tele.toFixed(2);
+    ensureLensZoomModel(lens);
+    lens.zoomConfig.wideFL = wide;
+    lens.zoomConfig.teleFL = tele;
     return { wide, tele };
+  }
+
+  function getGroupZoomOffset(group, zoomPos) {
+    if (!group || group.enabled === false || !group.moveWithZoom) return 0;
+    const z = group.zoom || {};
+    const mode = normalizeZoomMode(z.mode || "fixed");
+    const start = Number.isFinite(Number(z.startOffset)) ? Number(z.startOffset) : 0;
+    const end = Number.isFinite(Number(z.endOffset)) ? Number(z.endOffset) : start;
+    const p = clamp(Number(zoomPos || 0), 0, 1);
+    if (mode === "linear") return start + ((end - start) * p);
+    return start;
+  }
+
+  function buildRawZoomGroupOffsets(lensObj, zoomPos) {
+    ensureLensZoomModel(lensObj);
+    const out = {};
+    const scale = clamp(num(lensObj?.zoomConfig?.movementScale, 1), 0, 4);
+    for (const [gid, g] of Object.entries(lensObj.groups || {})) {
+      const off = getGroupZoomOffset(g, zoomPos) * scale;
+      out[gid] = Number.isFinite(off) ? off : 0;
+    }
+    return out;
+  }
+
+  function validateGroupOffsetLayout(surfaces, offsets, scale = 1) {
+    if (!Array.isArray(surfaces) || surfaces.length < 2) return { ok: true };
+    let x = 0;
+    let prev = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < surfaces.length; i++) {
+      const s = surfaces[i];
+      let vx = x;
+      const t = String(s?.type || "").toUpperCase();
+      if (t !== "OBJ" && t !== "IMS") {
+        const gid = normalizeGroupId(s?.groupId, "");
+        if (gid) {
+          const moveWithZoom = Object.prototype.hasOwnProperty.call(s, "moveWithZoom")
+            ? !!s.moveWithZoom
+            : true;
+          if (moveWithZoom) {
+            const baseOff = Number(offsets?.[gid] || 0);
+            if (Number.isFinite(baseOff) && Math.abs(baseOff) > 1e-12) vx += baseOff * scale;
+          }
+        }
+      }
+      if (i > 0 && vx < (prev - 1e-6)) {
+        return { ok: false, index: i, prev, current: vx };
+      }
+      prev = vx;
+      x += Number(s?.t || 0);
+    }
+    return { ok: true };
+  }
+
+  function scaleOffsetMap(offsets, scale = 1) {
+    const out = {};
+    for (const [k, v] of Object.entries(offsets || {})) {
+      const gid = normalizeGroupId(k, "");
+      if (!gid) continue;
+      const n = Number(v);
+      out[gid] = Number.isFinite(n) ? n * scale : 0;
+    }
+    return out;
+  }
+
+  function clampOffsetsForValidLayout(surfaces, offsets) {
+    const direct = validateGroupOffsetLayout(surfaces, offsets, 1);
+    if (direct.ok) {
+      return { ok: true, offsets: scaleOffsetMap(offsets, 1), scale: 1, clamped: false };
+    }
+
+    let lo = 0;
+    let hi = 1;
+    for (let it = 0; it < 30; it++) {
+      const mid = (lo + hi) * 0.5;
+      const chk = validateGroupOffsetLayout(surfaces, offsets, mid);
+      if (chk.ok) lo = mid;
+      else hi = mid;
+    }
+    const finalScale = clamp(lo, 0, 1);
+    if (finalScale <= 1e-5) {
+      return {
+        ok: false,
+        offsets: scaleOffsetMap(offsets, 0),
+        scale: 0,
+        clamped: true,
+        reason: "zoom_group_crossing",
+      };
+    }
+    return {
+      ok: true,
+      offsets: scaleOffsetMap(offsets, finalScale),
+      scale: finalScale,
+      clamped: finalScale < 0.9995,
+    };
+  }
+
+  function applyZoomState(pos01, opts = null) {
+    const o = opts || {};
+    ensureLensZoomModel(lens);
+    const p = clamp(num(pos01, lens?.zoomConfig?.pos ?? 0), 0, 1);
+    const offsetsRaw = buildRawZoomGroupOffsets(lens, p);
+    const layout = clampOffsetsForValidLayout(lens.surfaces, offsetsRaw);
+    if (!layout.ok) {
+      if (o.toast !== false) toast("Zoom blocked: invalid group layout (crossing surfaces).");
+      return { ok: false, reason: layout.reason || "invalid_layout", pos: p, scale: layout.scale || 0 };
+    }
+
+    lens.zoomConfig.pos = p;
+    lens.zoomConfig.appliedGroupOffsets = layout.offsets;
+    lens.zoomConfig.lastValidScale = Number(layout.scale || 1);
+    if (ui.zoomPos && o.syncUi !== false) ui.zoomPos.value = String(Math.round(p * 100));
+
+    if (o.render !== false) scheduleRenderAll();
+    if (o.save) scheduleAutosave();
+    if (layout.clamped && o.toast) {
+      toast(`Zoom motion clamped to ${(layout.scale * 100).toFixed(0)}% to keep layout valid.`);
+    }
+    return {
+      ok: true,
+      pos: p,
+      scale: layout.scale,
+      clamped: !!layout.clamped,
+      groupOffsets: clone(layout.offsets),
+    };
   }
 
   function updateZoomReadouts() {
@@ -7103,6 +7698,7 @@
 
     const pos = clamp(num(ui.zoomPos.value, 0), 0, 100);
     ui.zoomPos.value = pos.toFixed(0);
+    ensureLensZoomModel(lens);
 
     const target = range.wide + ((range.tele - range.wide) * (pos / 100));
     if (ui.zoomPosOut) ui.zoomPosOut.textContent = `${pos.toFixed(0)}%`;
@@ -7114,8 +7710,308 @@
     return { ...range, pos, target };
   }
 
+  function snapshotLensGeometry(lensObj = lens) {
+    return {
+      name: String(lensObj?.name || "No name"),
+      notes: Array.isArray(lensObj?.notes) ? clone(lensObj.notes) : [],
+      surfaces: clone(lensObj?.surfaces || []),
+      groups: clone(lensObj?.groups || {}),
+      zoomConfig: clone(lensObj?.zoomConfig || {}),
+      selectedIndex,
+    };
+  }
+
+  function restoreLensGeometry(snapshot, opts = null) {
+    const o = opts || {};
+    if (!snapshot || !Array.isArray(snapshot.surfaces)) return false;
+    lens = sanitizeLens({
+      name: String(snapshot.name || lens?.name || "No name"),
+      notes: Array.isArray(snapshot.notes) ? snapshot.notes : (lens?.notes || []),
+      surfaces: snapshot.surfaces,
+      groups: snapshot.groups || {},
+      zoomConfig: snapshot.zoomConfig || {},
+    });
+    selectedIndex = clamp(
+      Number(snapshot.selectedIndex ?? selectedIndex ?? 0),
+      0,
+      Math.max(0, (lens?.surfaces?.length || 1) - 1)
+    );
+    clampAllApertures(lens.surfaces);
+    buildTable();
+    applySensorToIMS();
+    if (o.render !== false) renderAll();
+    if (o.save) scheduleAutosave();
+    return true;
+  }
+
+  function getZoomTargetForPos(pos01) {
+    const zc = lens?.zoomConfig || {};
+    const wide = clamp(Math.abs(num(zc.wideFL, num(ui.zoomWideFL?.value, ZOOM_BUILDER_CFG.defaultWide))), ZOOM_BUILDER_CFG.minFl, ZOOM_BUILDER_CFG.maxFl);
+    const tele = clamp(Math.abs(num(zc.teleFL, num(ui.zoomTeleFL?.value, Math.max(wide, ZOOM_BUILDER_CFG.defaultTele)))), ZOOM_BUILDER_CFG.minFl, ZOOM_BUILDER_CFG.maxFl);
+    const w = Math.min(wide, tele);
+    const t = Math.max(wide, tele);
+    const p = clamp(Number(pos01 || 0), 0, 1);
+    return w + ((t - w) * p);
+  }
+
+  function evaluateZoomPosition(pos01, opts = null) {
+    const o = opts || {};
+    const restoreAfter = o.restore !== false;
+    const snap = snapshotLensGeometry();
+    try {
+      const ap = applyZoomState(pos01, { render: false, save: false, syncUi: false, toast: false });
+      if (!ap.ok) {
+        return { ok: false, pos: clamp(Number(pos01 || 0), 0, 1), reason: ap.reason || "zoom_apply_failed" };
+      }
+
+      const focus = getFocusStateFromUi();
+      const wavePreset = ui.wavePreset?.value || "d";
+      const sensor = getSensorWH();
+      const metrics = computeMetrics({
+        surfaces: lens.surfaces,
+        wavePreset,
+        focusMode: focus.focusMode,
+        sensorX: focus.sensorX,
+        lensShift: focus.lensShift,
+        sensorW: sensor.w,
+        sensorH: sensor.h,
+        rayCount: num(ui.rayCount?.value, 31),
+        autofocus: false,
+        useCache: false,
+      });
+
+      const af = findBestFocusShift(
+        lens.surfaces,
+        focus.focusMode,
+        focus.sensorX,
+        focus.lensShift,
+        wavePreset,
+        {
+          rangeMm: 1.8,
+          coarseStepMm: 0.15,
+          fineHalfMm: 0.45,
+          fineStepMm: 0.04,
+          rayCount: Math.max(11, Math.min(31, Number(ui.rayCount?.value || 21) | 0)),
+          fieldMode: "center",
+        }
+      );
+      const targetFl = getZoomTargetForPos(ap.pos);
+      const efl = Number(metrics?.efl);
+      const eflRelErr = (Number.isFinite(efl) && Number.isFinite(targetFl) && targetFl > 1e-9)
+        ? Math.abs((efl - targetFl) / targetFl)
+        : Infinity;
+      const focusRef = focus.focusMode === "cam" ? Number(focus.sensorX || 0) : Number(focus.lensShift || 0);
+      const focusShift = Number(af?.shift);
+      const focusDrift = (af?.ok && Number.isFinite(focusShift))
+        ? Math.abs(focusShift - focusRef)
+        : Infinity;
+      return {
+        ok: true,
+        pos: ap.pos,
+        zoomScale: Number(ap.scale || 1),
+        targetFl,
+        efl,
+        eflRelErr,
+        focusDrift,
+        metrics,
+        autofocus: af,
+      };
+    } finally {
+      if (restoreAfter) restoreLensGeometry(snap, { render: false, save: false });
+    }
+  }
+
+  function evaluateZoomRange(samples = [0, 0.5, 1], opts = null) {
+    const o = opts || {};
+    const arr = Array.isArray(samples) && samples.length
+      ? samples.map((v) => clamp(Number(v || 0), 0, 1))
+      : [0, 0.5, 1];
+    const uniq = Array.from(new Set(arr.map((v) => Number(v.toFixed(6))))).sort((a, b) => a - b);
+    const snap = snapshotLensGeometry();
+    const out = [];
+    try {
+      for (const p of uniq) {
+        out.push(evaluateZoomPosition(p, { restore: false }));
+      }
+      const report = {
+        ok: out.every((r) => !!r?.ok),
+        samples: out,
+      };
+      report.parfocalPenalty = parfocalPenalty(report);
+      report.targetZoomPenalty = targetZoomPenalty(report);
+      report.score = scoreZoomDesign(report);
+      return report;
+    } finally {
+      restoreLensGeometry(snap, { render: o.render !== false, save: false });
+    }
+  }
+
+  function parfocalPenalty(rangeEval) {
+    const list = Array.isArray(rangeEval?.samples) ? rangeEval.samples : [];
+    const drifts = list.filter((r) => r?.ok).map((r) => Number(r.focusDrift)).filter((v) => Number.isFinite(v));
+    if (!drifts.length) return Infinity;
+    return Math.max(...drifts);
+  }
+
+  function targetZoomPenalty(rangeEval) {
+    const list = Array.isArray(rangeEval?.samples) ? rangeEval.samples : [];
+    let sum = 0;
+    let n = 0;
+    for (const r of list) {
+      if (!r?.ok || !Number.isFinite(Number(r.eflRelErr))) continue;
+      sum += Number(r.eflRelErr);
+      n++;
+    }
+    return n > 0 ? (sum / n) : Infinity;
+  }
+
+  function scoreZoomDesign(rangeEval) {
+    const pZoom = targetZoomPenalty(rangeEval);
+    const pParfocal = parfocalPenalty(rangeEval);
+    const z = Number.isFinite(pZoom) ? pZoom : 9e3;
+    const p = Number.isFinite(pParfocal) ? pParfocal : 9e3;
+    return z * 5000 + p * 400;
+  }
+
+  let _groupUiSync = false;
+  function nextAutoGroupId() {
+    ensureLensZoomModel(lens);
+    let n = 1;
+    while (lens.groups[`grp_${n}`]) n++;
+    return `grp_${n}`;
+  }
+
+  function applyActiveGroupEditorToModel() {
+    if (_groupUiSync) return false;
+    ensureLensZoomModel(lens);
+    const gid = normalizeGroupId(ui.groupSelect?.value, lens?.zoomConfig?.selectedGroupId || "");
+    if (!gid || !lens.groups[gid]) return false;
+    const g = lens.groups[gid];
+    g.name = String(ui.groupName?.value || gid).trim() || gid;
+    g.role = normalizeGroupRole(ui.groupRole?.value || g.role, g.role);
+    g.enabled = !!ui.groupEnabled?.checked;
+    g.moveWithZoom = !!ui.groupMoveWithZoom?.checked;
+    g.moveWithFocus = !!ui.groupMoveWithFocus?.checked;
+    g.lockGeometry = !!ui.groupLockGeometry?.checked;
+    g.zoom.mode = normalizeZoomMode(ui.groupZoomMode?.value || g.zoom?.mode || "fixed");
+    g.zoom.startOffset = num(ui.groupOffsetStart?.value, Number(g.zoom?.startOffset || 0));
+    g.zoom.endOffset = num(ui.groupOffsetEnd?.value, Number(g.zoom?.endOffset || 0));
+    for (const s of lens.surfaces || []) {
+      if (normalizeGroupId(s?.groupId, "") !== gid) continue;
+      s.groupRole = g.role;
+      s.moveWithZoom = g.moveWithZoom;
+      s.moveWithFocus = g.moveWithFocus;
+      s.lockGeometry = g.lockGeometry;
+    }
+    return true;
+  }
+
+  function refreshGroupManagerUi(opts = null) {
+    const o = opts || {};
+    if (!ui.groupSelect) return;
+    ensureLensZoomModel(lens);
+    _groupUiSync = true;
+    const groups = Object.values(lens.groups || {}).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const prefer = normalizeGroupId(o.preferGroupId, normalizeGroupId(ui.groupSelect.value, lens.zoomConfig?.selectedGroupId || ""));
+    const selectedId = groups.some((g) => g.id === prefer) ? prefer : (groups[0]?.id || "");
+    lens.zoomConfig.selectedGroupId = selectedId;
+    ui.groupSelect.innerHTML = groups.map((g) => `<option value="${g.id}">${g.id}</option>`).join("");
+    if (selectedId) ui.groupSelect.value = selectedId;
+    const g = lens.groups[selectedId];
+    if (g) {
+      if (ui.groupName) ui.groupName.value = String(g.name || g.id || "");
+      if (ui.groupRole) ui.groupRole.value = normalizeGroupRole(g.role, "fixed_front");
+      if (ui.groupZoomMode) ui.groupZoomMode.value = normalizeZoomMode(g.zoom?.mode || "fixed");
+      if (ui.groupEnabled) ui.groupEnabled.checked = !!g.enabled;
+      if (ui.groupMoveWithZoom) ui.groupMoveWithZoom.checked = !!g.moveWithZoom;
+      if (ui.groupMoveWithFocus) ui.groupMoveWithFocus.checked = !!g.moveWithFocus;
+      if (ui.groupLockGeometry) ui.groupLockGeometry.checked = !!g.lockGeometry;
+      if (ui.groupOffsetStart) ui.groupOffsetStart.value = Number(g.zoom?.startOffset || 0).toFixed(3);
+      if (ui.groupOffsetEnd) ui.groupOffsetEnd.value = Number(g.zoom?.endOffset || 0).toFixed(3);
+    }
+    const s = lens?.surfaces?.[selectedIndex];
+    if (ui.groupSurfaceInfo) {
+      const t = String(s?.type || "").toUpperCase();
+      const gid = normalizeGroupId(s?.groupId, "—");
+      ui.groupSurfaceInfo.textContent = `Selected surface #${selectedIndex} (${t || "—"}) group: ${gid || "—"}`;
+    }
+    _groupUiSync = false;
+  }
+
+  function addZoomGroup() {
+    ensureLensZoomModel(lens);
+    const gid = nextAutoGroupId();
+    lens.groups[gid] = makeZoomGroup(gid, "variator", {
+      name: `Group ${Object.keys(lens.groups).length + 1}`,
+      enabled: true,
+      moveWithZoom: true,
+      zoom: { mode: "linear", startOffset: 0, endOffset: 2.5 },
+    });
+    refreshGroupManagerUi({ preferGroupId: gid });
+    scheduleRenderAll();
+    scheduleAutosave();
+  }
+
+  function deleteActiveZoomGroup() {
+    ensureLensZoomModel(lens);
+    const gid = normalizeGroupId(ui.groupSelect?.value, "");
+    if (!gid || !lens.groups[gid]) return;
+    if (gid === "obj_fixed" || gid === "ims_fixed") {
+      toast("OBJ/IMS groups are protected.");
+      return;
+    }
+    const fallback = "fixed_front";
+    if (!lens.groups[fallback]) lens.groups[fallback] = makeZoomGroup(fallback, "fixed_front");
+    for (const s of lens.surfaces || []) {
+      if (normalizeGroupId(s?.groupId, "") !== gid) continue;
+      if (String(s?.type || "").toUpperCase() === "OBJ") {
+        s.groupId = "obj_fixed";
+        continue;
+      }
+      if (String(s?.type || "").toUpperCase() === "IMS") {
+        s.groupId = "ims_fixed";
+        continue;
+      }
+      s.groupId = fallback;
+      s.groupRole = lens.groups[fallback].role;
+      s.moveWithZoom = !!lens.groups[fallback].moveWithZoom;
+      s.moveWithFocus = !!lens.groups[fallback].moveWithFocus;
+      s.lockGeometry = !!lens.groups[fallback].lockGeometry;
+    }
+    delete lens.groups[gid];
+    refreshGroupManagerUi({ preferGroupId: fallback });
+    buildTable();
+    scheduleRenderAll();
+    scheduleAutosave();
+  }
+
+  function assignSelectedSurfaceToActiveGroup() {
+    ensureLensZoomModel(lens);
+    const s = lens?.surfaces?.[selectedIndex];
+    if (!s) return;
+    const t = String(s.type || "").toUpperCase();
+    if (t === "OBJ" || t === "IMS") {
+      toast("OBJ/IMS cannot be reassigned.");
+      return;
+    }
+    const gid = normalizeGroupId(ui.groupSelect?.value, "");
+    if (!gid || !lens.groups[gid]) return;
+    const g = lens.groups[gid];
+    s.groupId = gid;
+    s.groupRole = g.role;
+    s.moveWithZoom = !!g.moveWithZoom;
+    s.moveWithFocus = !!g.moveWithFocus;
+    s.lockGeometry = !!g.lockGeometry;
+    buildTable();
+    refreshGroupManagerUi({ preferGroupId: gid });
+    scheduleRenderAll();
+    scheduleAutosave();
+    toast(`Surface #${selectedIndex} assigned to ${gid}`);
+  }
+
   function applyZoomPosition(opts = null) {
     const o = opts || {};
+    const prevPos = clamp(num(lens?.zoomConfig?.pos, 0), 0, 1);
     const z = updateZoomReadouts();
     if (!z) return false;
 
@@ -7123,21 +8019,30 @@
       ? !!o.autoFocus
       : !!ui.zoomAutoFocus?.checked;
 
-    const res = scaleLensToTargetFocal(z.target, {
-      autoFocus: useAf,
-      silentFocus: true,
+    const pos01 = clamp(Number(z.pos) / 100, 0, 1);
+    const res = applyZoomState(pos01, {
       render: false,
+      save: false,
+      syncUi: false,
       toast: false,
     });
     if (!res.ok) {
-      if (o.toast !== false) toast("Zoom apply failed (EFL not solvable)");
+      if (ui.zoomPos) ui.zoomPos.value = String(Math.round(prevPos * 100));
+      updateZoomReadouts();
+      if (o.toast !== false) toast("Zoom apply failed (invalid group motion).");
       return false;
     }
 
+    let afRes = null;
+    if (useAf) afRes = autoFocus({ silent: true, render: false });
     if (ui.optTargetFL) ui.optTargetFL.value = Number(z.target).toFixed(2);
     scheduleRenderAll();
     if (o.save !== false) scheduleAutosave();
-    if (o.toast) toast(`Zoom set to ${z.target.toFixed(1)}mm (${z.pos.toFixed(0)}%)`);
+    if (o.toast) {
+      const afTag = useAf ? (afRes?.ok ? " • AF ok" : " • AF fail") : "";
+      const clampTag = res.clamped ? ` • motion clamped ${(Number(res.scale || 0) * 100).toFixed(0)}%` : "";
+      toast(`Zoom set (group motion) ${z.target.toFixed(1)}mm (${z.pos.toFixed(0)}%)${afTag}${clampTag}`);
+    }
     return true;
   }
 
@@ -12686,6 +13591,7 @@
     sensorW,
     sensorH,
   }) {
+    const placement = resolveZoomPlacementForSurfaces(surfaces, null);
     const key = JSON.stringify({
       wavePreset: String(wavePreset || "d"),
       sensorX: Number(sensorX || 0).toFixed(4),
@@ -12693,6 +13599,7 @@
       rayCount: Number(rayCount || 21) | 0,
       sensorW: Number(sensorW || 0).toFixed(3),
       sensorH: Number(sensorH || 0).toFixed(3),
+      zoomSig: zoomOffsetSignatureForSurfaces(surfaces, placement),
       fracs: Array.from(SHARP_OPT_CFG.angleFractions || []),
       weights: Array.from(SHARP_OPT_CFG.angleWeights || []),
       surfaces: (surfaces || []).map((s) => ({
@@ -12784,6 +13691,7 @@
     const rays = clamp(Number(rayCount || 21) | 0, 11, 61);
     const lutSamples = clamp(Number(lutN || COCKPIT_CFG.defaultLutN) | 0, 80, 1200);
     const lutPupil = clamp(Number(lutPupilSqrt || 1) | 0, 1, 8);
+    const activePlacement = resolveZoomPlacementForSurfaces(surfaces, null);
 
     const keyObj = {
       wavePreset: String(wavePreset || "d"),
@@ -12800,6 +13708,7 @@
       includeUsableIC: !!includeUsableIC,
       includeSharpness: !!includeSharpness,
       autofocus: !!autofocus,
+      zoomSig: zoomOffsetSignatureForSurfaces(surfaces, activePlacement),
       surfaces: surfaces.map((s) => ({
         type: String(s?.type || ""),
         R: Number(s?.R || 0).toFixed(6),
@@ -12814,7 +13723,7 @@
       return _cockpitMetricsCacheVal;
     }
 
-    const work = clone(surfaces);
+    const work = attachZoomPlacementToSurfaces(clone(surfaces), activePlacement);
     ensureStopExists(work);
     enforceSingleStopSurface(work);
     ensureStopInAirBothSides(work);
@@ -12834,7 +13743,7 @@
       }
     }
 
-    computeVertices(work, ls, sx);
+    computeVertices(work, ls, sx, activePlacement);
     const stopIdx = findStopSurfaceIndex(work);
     const phys = evaluatePhysicalConstraints(work);
     const rearVx = lastPhysicalVertexX(work);
@@ -12901,6 +13810,7 @@
         doCA: false,
         sensorW: wMm,
         sensorH: hMm,
+        placement: activePlacement,
       });
       if (includeUsableIC) {
         const uc = computeUsableIcFromLUTPack(lutPack, {
@@ -15400,9 +16310,20 @@
     ui.renderScale?.addEventListener("input", () => { scheduleRenderAll(); scheduleAutosave(); });
 
     updateZoomReadouts();
+    applyZoomState(num(ui.zoomPos?.value, 0) / 100, { render: false, save: false, syncUi: true, toast: false });
     ["zoomWideFL", "zoomTeleFL"].forEach((id) => {
-      ui[id]?.addEventListener("input", () => { updateZoomReadouts(); scheduleAutosave(); });
-      ui[id]?.addEventListener("change", () => { updateZoomReadouts(); scheduleAutosave(); });
+      ui[id]?.addEventListener("input", () => {
+        updateZoomReadouts();
+        applyZoomState(num(ui.zoomPos?.value, 0) / 100, { render: false, save: false, syncUi: false, toast: false });
+        scheduleRenderAll();
+        scheduleAutosave();
+      });
+      ui[id]?.addEventListener("change", () => {
+        updateZoomReadouts();
+        applyZoomState(num(ui.zoomPos?.value, 0) / 100, { render: false, save: false, syncUi: false, toast: false });
+        scheduleRenderAll();
+        scheduleAutosave();
+      });
     });
     ui.zoomPos?.addEventListener("input", () => {
       updateZoomReadouts();
@@ -15414,6 +16335,40 @@
     ui.zoomAutoFocus?.addEventListener("change", () => scheduleAutosave());
     ui.btnZoomApplyNow?.addEventListener("click", () => applyZoomPosition({ toast: true, save: true }));
     ui.btnZoomSyncRange?.addEventListener("click", syncZoomRangeToTargetFL);
+
+    ui.groupSelect?.addEventListener("change", () => {
+      refreshGroupManagerUi({ preferGroupId: ui.groupSelect?.value || "" });
+      scheduleAutosave();
+    });
+    ["groupName", "groupRole", "groupZoomMode", "groupOffsetStart", "groupOffsetEnd"].forEach((id) => {
+      ui[id]?.addEventListener("input", () => {
+        if (!applyActiveGroupEditorToModel()) return;
+        const p = num(ui.zoomPos?.value, 0) / 100;
+        applyZoomState(p, { render: false, save: false, syncUi: false, toast: false });
+        scheduleRenderAll();
+        scheduleAutosave();
+      });
+      ui[id]?.addEventListener("change", () => {
+        if (!applyActiveGroupEditorToModel()) return;
+        const p = num(ui.zoomPos?.value, 0) / 100;
+        applyZoomState(p, { render: false, save: false, syncUi: false, toast: false });
+        scheduleRenderAll();
+        scheduleAutosave();
+      });
+    });
+    ["groupEnabled", "groupMoveWithZoom", "groupMoveWithFocus", "groupLockGeometry"].forEach((id) => {
+      ui[id]?.addEventListener("change", () => {
+        if (!applyActiveGroupEditorToModel()) return;
+        const p = num(ui.zoomPos?.value, 0) / 100;
+        applyZoomState(p, { render: false, save: false, syncUi: false, toast: false });
+        scheduleRenderAll();
+        scheduleAutosave();
+      });
+    });
+    ui.btnGroupAdd?.addEventListener("click", addZoomGroup);
+    ui.btnGroupDelete?.addEventListener("click", deleteActiveZoomGroup);
+    ui.btnGroupAssignSelected?.addEventListener("click", assignSelectedSurfaceToActiveGroup);
+    refreshGroupManagerUi();
 
     ui.btnNew?.addEventListener("click", () => { newClearLens(); scheduleAutosave(); });
     ui.btnLoadOmit?.addEventListener("click", () => { loadLens(omit50ConceptV1()); scheduleAutosave(); });

@@ -134,7 +134,7 @@
             <div class="ctrl two">
               <div class="subTitle">Zoom Builder</div>
               <div class="hint" style="margin-top:6px">
-                Stel wide/tele in, scrub de slider en laat de lens naar de gekozen zoom-stand schalen.
+                Stel wide/tele in, scrub de slider en verplaats interne zoomgroepen naar de gekozen zoom-stand.
               </div>
             </div>
 
@@ -169,6 +169,90 @@
                 <button id="btnZoomSyncRange" class="btn" type="button">Sync range → target FL</button>
               </div>
               <div id="zoomRatioOut" class="hint" style="margin-top:8px">Zoom ratio: 2.92x</div>
+            </div>
+
+            <div class="ctrl two ctrlDivider"></div>
+
+            <div class="ctrl two">
+              <div class="subTitle">Zoom Groups (MVP)</div>
+              <div class="hint" style="margin-top:6px">
+                Koppel surfaces aan groepen. Zoom beweegt alleen groepen met zoom-mode enabled.
+              </div>
+            </div>
+
+            <div class="ctrl">
+              <label for="groupSelect">Active group</label>
+              <select id="groupSelect"></select>
+            </div>
+
+            <div class="ctrl">
+              <label>Group actions</label>
+              <div class="cockpitBtnGrid">
+                <button id="btnGroupAdd" class="btn" type="button">+ Group</button>
+                <button id="btnGroupDelete" class="btn btnDanger" type="button">Delete group</button>
+              </div>
+            </div>
+
+            <div class="ctrl">
+              <label for="groupName">Group name</label>
+              <input id="groupName" type="text" value="" />
+            </div>
+
+            <div class="ctrl">
+              <label for="groupRole">Group role</label>
+              <select id="groupRole">
+                <option value="fixed_front">fixed_front</option>
+                <option value="variator">variator</option>
+                <option value="compensator">compensator</option>
+                <option value="relay">relay</option>
+                <option value="fixed_rear">fixed_rear</option>
+                <option value="focus">focus</option>
+              </select>
+            </div>
+
+            <div class="ctrl">
+              <label for="groupZoomMode">Zoom mode</label>
+              <select id="groupZoomMode">
+                <option value="fixed">fixed</option>
+                <option value="linear">linear</option>
+              </select>
+            </div>
+
+            <div class="ctrl">
+              <label for="groupEnabled">Enabled</label>
+              <input id="groupEnabled" type="checkbox" checked />
+            </div>
+
+            <div class="ctrl">
+              <label for="groupMoveWithZoom">Move with zoom</label>
+              <input id="groupMoveWithZoom" type="checkbox" checked />
+            </div>
+
+            <div class="ctrl">
+              <label for="groupMoveWithFocus">Move with focus</label>
+              <input id="groupMoveWithFocus" type="checkbox" />
+            </div>
+
+            <div class="ctrl">
+              <label for="groupLockGeometry">Lock geometry</label>
+              <input id="groupLockGeometry" type="checkbox" />
+            </div>
+
+            <div class="ctrl">
+              <label for="groupOffsetStart">Offset start (mm)</label>
+              <input id="groupOffsetStart" type="number" step="0.01" value="0" />
+            </div>
+
+            <div class="ctrl">
+              <label for="groupOffsetEnd">Offset end (mm)</label>
+              <input id="groupOffsetEnd" type="number" step="0.01" value="0" />
+            </div>
+
+            <div class="ctrl two">
+              <div class="cockpitBtnGrid cockpitSnapGrid">
+                <button id="btnGroupAssignSelected" class="btn btnPrimary" type="button">Assign selected surface → group</button>
+              </div>
+              <div id="groupSurfaceInfo" class="hint" style="margin-top:8px">Selected surface group: —</div>
             </div>
 
             <div class="ctrl two ctrlDivider"></div>
@@ -376,6 +460,7 @@
                 <th style="width:110px">Thickness</th>
                 <th style="width:110px">Aperture</th>
                 <th style="width:170px">Glass</th>
+                <th style="width:110px">Group</th>
                 <th style="width:70px">Stop?</th>
               </tr>
             </thead>
